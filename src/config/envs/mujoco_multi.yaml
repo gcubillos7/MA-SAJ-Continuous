@@ -1,0 +1,9 @@
+env: mujoco_multi
+
+env_args:
+  episode_limit: 1000
+  scenario: "HalfCheetah-v2"
+  agent_conf: "6x1"
+  agent_obsk: 1
+  obs_add_global_pos: False
+t_max: 2000000
