@@ -103,6 +103,7 @@ def run_sequential(args, logger):
     args.obs_shape = env_info["obs_shape"]
     args.actions_dtype = env_info.get("actions_dtype", np.int8) 
     action_dtype = th.long if not args.actions_dtype == np.float32 else th.float
+    dim_ac = 1
 
     if not ('particle' not in args.env and "cts_matrix_game" not in args.env and "mujoco_multi" not in args.env):
         env_info = runner.get_env_info()
@@ -172,13 +173,16 @@ def run_sequential(args, logger):
         elif all([isinstance(act_space, spaces.Tuple) for act_space in args.action_spaces]):
             actions_vshape = 1 if not args.actions_dtype == np.float32 else \
                 max([i.spaces[0].shape[0] + i.spaces[1].shape[0] for i in args.action_spaces])
+        dim_ac = args.n_actions
+
 
     
     # Default/Base scheme
+
     scheme = {
         "state": {"vshape": env_info["state_shape"]},
         "obs": {"vshape": env_info["obs_shape"], "group": "agents"},
-        "actions": {"vshape": (1,), "group": "agents", "dtype": action_dtype},
+        "actions": {"vshape": (dim_ac,), "group": "agents", "dtype": action_dtype},
         "avail_actions": {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
         "reward": {"vshape": (1,)},
         "terminated": {"vshape": (1,), "dtype": th.uint8},

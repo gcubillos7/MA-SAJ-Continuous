@@ -17,7 +17,8 @@ class GumbelSoftmax():
                                               decay="linear")
         self.epsilon = self.schedule.eval(0)
         self.eps = 1e-10
-    def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False): 
+
+    def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
         masked_policies = agent_inputs.clone()
         masked_policies[avail_actions == 0.0] = 0.0
         self.epsilon = self.schedule.eval(t_env)
@@ -33,26 +34,26 @@ class GumbelSoftmax():
 
         return picked_actions
 
-REGISTRY["gumbel"] = GumbelSoftmax
 
+REGISTRY["gumbel"] = GumbelSoftmax
 
 
 class MultinomialActionSelector():
 
     def __init__(self, args):
         self.args = args
-        
+
         self.schedule = DecayThenFlatSchedule(args.epsilon_start,
-                                args.epsilon_finish, args.epsilon_anneal_time,
-                                time_length_exp = args.epsilon_anneal_time_exp,
-                                role_action_spaces_update_start = args.role_action_spaces_update_start,
-                                decay="linear")
+                                              args.epsilon_finish, args.epsilon_anneal_time,
+                                              time_length_exp=args.epsilon_anneal_time_exp,
+                                              role_action_spaces_update_start=args.role_action_spaces_update_start,
+                                              decay="linear")
 
         self.epsilon = self.schedule.eval(0)
         self.test_greedy = getattr(args, "test_greedy", True)
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
-        
+
         masked_policies = agent_inputs.clone()
         masked_policies[avail_actions == 0] = 0.0
 
@@ -82,7 +83,6 @@ class EpsilonGreedyActionSelector():
         self.epsilon = self.schedule.eval(0)
 
     def select_action(self, agent_inputs, avail_actions, t_env, test_mode=False):
-
         # Assuming agent_inputs is a batch of Q-Values for each agent bav
         self.epsilon = self.schedule.eval(t_env)
 
@@ -99,8 +99,9 @@ class EpsilonGreedyActionSelector():
         random_actions = Categorical(avail_actions.float()).sample().long()
 
         picked_actions = pick_random * random_actions + (1 - pick_random) * masked_q_values.max(dim=2)[1]
-        
+
         return picked_actions
+
 
 REGISTRY["epsilon_greedy"] = EpsilonGreedyActionSelector
 
@@ -118,29 +119,41 @@ class GaussianActionSelector():
             self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
         else:
             self.dkl = kl_divergence
+        self.with_logprob = getattr(args, "with_logprob", True)
+        self.unit2actions = args.actions2unit_coef
+        self.actions_min = args.actions_min
 
     def select_action(self, mu, sigma, t_env, prior, test_mode=False):
         # expects the following input dimensionalities:
         # mu: [b x a x u]
         # sigma: [b x a x u]
-        assert mu.dim() == 3, "incorrect input dim: mu"
-        assert sigma.dim() == 3, "incorrect input dim: sigma"
-        sigma = sigma.view(-1, self.args.n_agents, self.args.n_actions, self.args.n_actions)
+
+        # assert mu.dim() == 3, "incorrect input dim: mu"
+        # assert sigma.dim() == 3, "incorrect input dim: sigma"
+        # if self.args.n_actions==1:
+        #     sigma = sigma.view(-1, self.args.n_agents, self.args.n_actions, self.args.n_actions)
+        # else:
+        #     sigma = th.diag_embed(sigma)
+        dkl_loss = None
 
         if test_mode and self.test_greedy:
             picked_actions = mu
+            log_p_pi = None
         else:
-            dst = th.distributions.MultivariateNormal(mu.view(-1,
-                                                              mu.shape[-1]),
-                                                      sigma.view(-1,
-                                                                 mu.shape[-1],
-                                                                 mu.shape[-1]))
-            try:
-                picked_actions = dst.sample().view(*mu.shape)
-            except Exception as e:
-                a = 5
-                pass
-        return picked_actions
+            #dst = th.distributions.MultivariateNormal(mu.view(-1, mu.shape[-1]), sigma.view(-1, mu.shape[-1],
+            # mu.shape[-1]))
+            dst = th.distributions.Normal(mu, sigma)
+
+            picked_actions = dst.sample().view(*mu.shape)
+            log_p_pi = dst.log_prob(picked_actions).sum(axis=-1)
+            log_p_pi -= (2 * (np.log(2) - picked_actions - F.softplus(-2 * picked_actions))).sum(axis=-1)
+
+
+
+        picked_actions = th.tanh(picked_actions)
+        picked_actions = self.unit2actions * picked_actions + self.actions_min
+
+        return picked_actions, log_p_pi, dkl_loss
 
 
 REGISTRY["gaussian"] = GaussianActionSelector
@@ -157,10 +170,11 @@ class GaussianLatentActionSelector():
             self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
         else:
             self.dkl = kl_divergence
-        self.with_logprob =  getattr(args, "with_logprob", True)
+        self.with_logprob = getattr(args, "with_logprob", True)
         self.threshold = nn.parameter.Parameter(th.tensor(0.3181), requires_grad=False)  # 2 times the variance same mu
         self.unit2actions = args.actions2unit_coef
         self.actions_min = args.actions_min
+
     def update_decoder(self, decoder):
         self.decoder = decoder
         for param in self.decoder.parameters():

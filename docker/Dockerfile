@@ -66,3 +66,4 @@ RUN pip install git+https://github.com/schroederdewitt/multiagent_mujoco.git
 #ENTRYPOINT ["/mujoco_py/vendor/Xdummy-entrypoint"]
 # CMD ["pytest"]
 COPY . /mujoco_py
+COPY /assets /env/lib/python3.8/site-packages/multiagent_mujoco/assets

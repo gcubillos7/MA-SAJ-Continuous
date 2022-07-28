@@ -12,11 +12,16 @@ class MASAJRole(nn.Module):
         super(MASAJRole, self).__init__()
         self.args = args
         self.n_actions = args.n_actions
+        self.use_latent_normal = getattr(args, 'use_latent_normal', False)
 
-        self.mu_layer = nn.Linear(args.rnn_hidden_dim, args.action_latent_dim)
-        self.log_std_layer = nn.Linear(args.rnn_hidden_dim, args.action_latent_dim)
+        if self.use_latent_normal:
+            output_dim = args.action_latent_dim
+        else:
+            output_dim = args.n_actions
+
+        self.mu_layer = nn.Linear(args.rnn_hidden_dim, output_dim)
+        self.log_std_layer = nn.Linear(args.rnn_hidden_dim, output_dim)
         self.prior = None
-        # self.use_latent_normal = args.use_latent_normal
 
     def forward(self, hidden):
         latent_mu = self.mu_layer(hidden)

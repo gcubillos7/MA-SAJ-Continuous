@@ -28,6 +28,7 @@ class MASAJ_Learner:
 
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
+
         self.n_roles = args.n_roles
         self.n_role_clusters = args.n_role_clusters
         self.last_target_update_episode = 0
@@ -49,7 +50,7 @@ class MASAJ_Learner:
 
         self.critic_params1 = list(self.critic1.parameters()) + list(self.mixer1.parameters())
         self.critic_params2 = list(self.critic2.parameters()) + list(self.mixer2.parameters())
-        
+
         self.value_params = []
         self.role_action_spaces_updated = True
         if self.continuous_actions:
@@ -599,8 +600,8 @@ class MASAJ_Learner:
         #  Eq 9 in FOP Paper
         targets_act = target_v_act - alpha * log_p_action_taken.mean(dim=-1, keepdim=True)
         targets_role = target_v_role - alpha * log_p_role_taken.mean(dim=-1, keepdim=True)
-                # add selected role to critic inputs as observation
 
+        # add selected role to critic inputs as observation
         if self.args.obs_role:
             inputs = th.cat([inputs, roles_onehot], dim = -1)
 

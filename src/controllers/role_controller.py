@@ -57,12 +57,13 @@ class ROLEMAC:
             self.forward = self.continuous_forward
             self.select_actions = self.select_actions_continuous 
             self.kl_loss = None
+            self.use_latent_normal = getattr(args, "use_latent_normal", False)
 
 
     def select_actions_continuous(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         with th.no_grad():
             (agent_outputs, _), (_, _) = self.forward(ep_batch, t=t_ep, test_mode=test_mode, t_env=t_env)
-        selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)     
+        selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)
         return agent_outputs[bs].detach(), selected_roles[bs].detach()
 
     def select_actions_discrete(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
@@ -169,33 +170,37 @@ class ROLEMAC:
 
         for role_i in range(self.n_roles):
             # [bs * n_agents, n_actions]
-            dist_params = self.roles[role_i](self.hidden_states)
+            hidden_states = self.hidden_states.view(batch_size, self.n_agents, -1)
+            dist_params = self.roles[role_i](hidden_states)
             prior = self.roles[role_i].prior
             pi_action, log_p_action_taken, dkl_loss = self.action_selector.select_action(*dist_params, prior=prior,
                                                                            test_mode=test_mode, t_env = t_env)
 
             actions.append(pi_action)
-            log_p_action.append(log_p_action_taken)
-            kl_loss.append(dkl_loss)
 
-        kl_loss = th.stack(kl_loss, dim=-1)  # [bs*n_agents, n_roles]
-        kl_loss = kl_loss.view(batch_size * self.n_agents, -1)
-        kl_loss = kl_loss.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
-        kl_loss = kl_loss[:, 0]
-        kl_loss = kl_loss.view(batch_size, self.n_agents)
-        self.kl_loss = kl_loss
+            if not test_mode:
+                log_p_action.append(log_p_action_taken)
+                kl_loss.append(dkl_loss)
 
-        log_p_action = th.stack(log_p_action, dim=-1)  # [bs*n_agents, n_roles]
-        log_p_action = log_p_action.view(batch_size * self.n_agents, -1)
-        log_p_action = log_p_action.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
-        log_p_action = log_p_action[:, 0]
-        log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]     
-
+        if not test_mode:
+            if self.use_latent_normal:
+                kl_loss = th.stack(kl_loss, dim=-1)  # [bs*n_agents, n_roles]
+                kl_loss = kl_loss.view(batch_size * self.n_agents, -1)
+                kl_loss = kl_loss.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
+                kl_loss = kl_loss[:, 0]
+                kl_loss = kl_loss.view(batch_size, self.n_agents)
+                self.kl_loss = kl_loss
+            log_p_action = th.stack(log_p_action, dim=-1)  # [bs*n_agents, n_roles]
+            log_p_action = log_p_action.view(batch_size * self.n_agents, -1)
+            log_p_action = log_p_action.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
+            log_p_action = log_p_action[:, 0]
+            log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]
         actions = th.stack(actions, dim=-1)  # [bs*n_agents, dim_actions, n_roles]
         actions = actions.view(batch_size * self.n_agents, self.n_actions, -1)
-        actions = actions.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=-1)
-        actions = actions[:, 0]
-        actions = actions.view(batch_size, self.n_agents, self.n_actions, -1)
+
+        actions = actions.gather(index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles), dim=-1)
+        actions = actions[..., 0]
+        actions = actions.view(batch_size, self.n_agents, self.n_actions)
         
         return actions, log_p_action
 
@@ -361,17 +366,37 @@ class ROLEMAC:
         # Assumes homogenous agents with flat observations.
         # Other MACs might want to e.g. delegate building inputs to each agent
         bs = batch.batch_size
-        inputs = [batch["obs"][:, t], th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1)]
-        inputs = th.cat([x.reshape(bs * self.n_agents, -1) for x in inputs], dim=1)
+        inputs = [batch["obs"][:, t]]
+        if self.args.obs_last_action:
+            if self.continuous_actions:
+                if t == 0:
+                    inputs.append(th.zeros_like(batch["actions"][:, t]))
+                else:
+                    inputs.append(batch["actions"][:, t - 1])
+            else:
+                if t == 0:
+                    inputs.append(th.zeros_like(batch["actions_onehot"][:, t]))
+                else:
+                    inputs.append(batch["actions_onehot"][:, t - 1])
 
+        if self.args.obs_agent_id:
+            inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1))
+
+        inputs = th.cat([x.reshape(bs*self.n_agents, -1) for x in inputs], dim=1)
         return inputs
 
     def _get_input_shape(self, scheme):
         input_shape = scheme["obs"]["vshape"]
 
         # Add agent ID to input
-        input_shape += self.n_agents
+        if self.args.obs_agent_id:
+            input_shape += self.n_agents
 
+        if self.args.obs_last_action:
+            if self.continuous_actions:
+                input_shape += scheme["actions"]["vshape"][0]
+            else:
+                input_shape += scheme["actions_onehot"]["vshape"][0]
         return input_shape
 
     def update_roles(self):
