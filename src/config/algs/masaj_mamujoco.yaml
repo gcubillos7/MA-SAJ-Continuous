@@ -12,7 +12,7 @@ role: "msj"
 # Ambient dependent
 continuous_actions: True
 action_selector: "gaussian"
-use_latent_normal: False # era false xd
+use_latent_normal: False
 
 # Encoder-decoder for actions
 action_encoder: "obs_reward"
@@ -25,11 +25,11 @@ epsilon_anneal_time_exp: 70000
 mask_before_softmax: True
 
 # Learners hyperparameters
-batch_size: 32
+batch_size: 64
 target_update_interval: 200
-lr: 0.0005
-c_lr: 0.0005
-v_lr: 0.0005
+lr: 0.001
+c_lr: 0.001
+v_lr: 0.001
 td_lambda: 0.8
 role_interval: 5
 role_action_spaces_update_start: 50000
@@ -45,7 +45,7 @@ mixing_embed_dim: 32
 n_head: 4  
 
 # Buffer hyper-parameters
-buffer_size: 5000
+buffer_size: 10000
 burn_in_period: 100
 
 # Logging parameters

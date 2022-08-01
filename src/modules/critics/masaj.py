@@ -12,7 +12,7 @@ class MASAJCritic(nn.Module):
         self.n_agents = args.n_agents
 
         # obs + n_agents + n_actions
-        
+
         self.output_type = "q"
         obs_shape = self._get_input_shape(scheme)
         self.input_shape = obs_shape + self.n_actions if args.continuous_actions else obs_shape
@@ -21,19 +21,19 @@ class MASAJCritic(nn.Module):
 
         self.dim_out = 1 if args.continuous_actions else self.n_actions
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, self.dim_out)
+        self.fc1 = nn.Linear(self.input_shape, 128)
+        self.fc2 = nn.Linear(128, 128)
+        self.fc3 = nn.Linear(128, self.dim_out)
 
     def forward(self, inputs, actions=None):
         if actions is not None:
             inputs = th.cat([inputs, actions], dim=-1)
-        
+
         x = F.relu(self.fc1(inputs))
         x = F.relu(self.fc2(x))
         q = self.fc3(x)
         return q  # bs, max_t, n_agents, (1 if args.continous_actions else self.n_actions)
-    
+
     def _build_inputs(self, batch, bs, max_t):
 
         inputs = [batch["obs"],
