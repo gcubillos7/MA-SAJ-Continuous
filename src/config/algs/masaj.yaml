@@ -33,7 +33,8 @@ v_lr: 0.0005
 td_lambda: 0.8
 role_interval: 5
 role_action_spaces_update_start: 50000
-use_role_value: False
+use_role_value: True
+double_value: False
 
 # Network structure hyper-parameters
 obs_role: True # Pass roles as observations to critics

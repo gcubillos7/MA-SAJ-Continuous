@@ -345,9 +345,9 @@ class MASAJ_Learner:
         return vs1, vs2
 
     def _get_role_value(self, role_inputs):
-        vs1 = self.value(role_inputs)
+        vs1 = self.role_value(role_inputs)
         if self.double_value:
-            vs2 = self.value2(role_inputs)
+            vs2 = self.role_value2(role_inputs)
         else:
             vs2 = vs1
         return vs1, vs2
@@ -764,8 +764,14 @@ class MASAJ_Learner:
             polyak_update(self.role_mixer1.parameters, self.role_target_mixer1.parameters, tau)
             polyak_update(self.role_mixer2.parameters, self.role_target_mixer2.parameters, tau)
 
-            polyak_update(self.value.parameters, self.target_value.parameters, tau)
-            polyak_update(self.role_value.parameters, self.target_role_value2.parameters, tau)
+            if self.continuous_actions:
+                polyak_update(self.value.parameters, self.target_value.parameters, tau)
+                if self.double_value:
+                    polyak_update(self.value2.parameters, self.target_value2.parameters, tau)
+            if self.use_role_value:
+                polyak_update(self.role_value.parameters, self.target_role_value.parameters, tau)
+                if self.double_value:
+                    polyak_update(self.role_value2.parameters, self.target_role_value2.parameters, tau)
         else:
 
             self.target_critic1.load_state_dict(self.critic1.state_dict())
@@ -780,10 +786,10 @@ class MASAJ_Learner:
             self.role_target_mixer1.load_state_dict(self.role_mixer1.state_dict())
             self.role_target_mixer2.load_state_dict(self.role_mixer2.state_dict())
 
-            self.target_value.load_state_dict(self.value.state_dict())
-
-            if self.double_value:
-                self.target_value2.load_state_dict(self.value2.state_dict())
+            if self.continuous_actions:
+                self.target_value.load_state_dict(self.value.state_dict())
+                if self.double_value:
+                    self.target_value2.load_state_dict(self.value2.state_dict())
 
             if self.use_role_value:
                 self.target_role_value.load_state_dict(self.role_value.state_dict())

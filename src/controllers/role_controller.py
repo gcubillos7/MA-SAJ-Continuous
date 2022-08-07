@@ -29,6 +29,7 @@ class ROLEMAC:
         self.n_roles = args.n_roles
         self.n_clusters = args.n_role_clusters
         self.agent_output_type = getattr(args, "agent_output_type", None)
+        self._get_input_shape = self._get_input_shape_continous if self.continuous_actions else self._get_input_shape_discrete
         input_shape = self._get_input_shape(scheme)
 
         self._build_agents(input_shape)
@@ -45,7 +46,6 @@ class ROLEMAC:
         self.selected_roles = None
 
         # Role latent and actions representations
-
 
         if not self.continuous_actions:
             self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
@@ -391,7 +391,7 @@ class ROLEMAC:
         inputs = th.cat([x.reshape(bs * self.n_agents, -1) for x in inputs], dim=1)
         return inputs
 
-    def _get_input_shape(self, scheme): # Continuous
+    def _get_input_shape_continous(self, scheme):  # Continuous
         input_shape = scheme["obs"]["vshape"]
 
         # Add agent ID to input
@@ -403,6 +403,17 @@ class ROLEMAC:
                 input_shape += scheme["actions"]["vshape"][0]
             else:
                 input_shape += scheme["actions_onehot"]["vshape"][0]
+        return input_shape
+
+    def _get_input_shape_discrete(self, scheme):
+        input_shape = scheme["obs"]["vshape"]
+        # print(input_shape)
+        if self.args.obs_last_action:
+            input_shape += scheme["actions_onehot"]["vshape"][0]
+        # print(input_shape)
+        if self.args.obs_agent_id:
+            input_shape += self.n_agents
+        # print(input_shape)
         return input_shape
 
     def update_roles(self):
