@@ -18,9 +18,9 @@ class ValueNet(nn.Module):
         self.output_type = "v"
 
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(self.input_shape, args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(args.rnn_hidden_dim, 1)
 
     def forward(self, inputs):
         x = F.relu(self.fc1(inputs))
@@ -61,9 +61,9 @@ class RoleValueNet(nn.Module):
         self.output_type = "v"
 
         # Set up network layers
-        self.fc1 = nn.Linear(input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(input_shape, args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(args.rnn_hidden_dim, 1)
 
     def forward(self, inputs):
         x = F.relu(self.fc1(inputs))

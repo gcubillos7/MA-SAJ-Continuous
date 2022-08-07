@@ -15,6 +15,7 @@ import copy
 import torch.nn.functional as F
 from sklearn.cluster import KMeans
 
+
 # This multi-agent controller shares parameters between agents
 class ROLEMAC:
     def __init__(self, scheme, groups, args):
@@ -44,21 +45,26 @@ class ROLEMAC:
         self.selected_roles = None
 
         # Role latent and actions representations
-        self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
-        
+
+
         if not self.continuous_actions:
+            self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
             self.forward = self.discrete_forward
-            self.select_actions = self.select_actions_discrete 
+            self.select_actions = self.select_actions_discrete
             np.random.seed(0)
-            self.action_repr = th.from_numpy(np.random.rand(self.n_actions, self.args.action_latent_dim)).float().to(args.device)
+            self.action_repr = th.from_numpy(np.random.rand(self.n_actions, self.args.action_latent_dim)).float().to(
+                args.device)
             self.role_action_spaces = th.ones(self.n_roles, self.n_actions).to(args.device)
         else:
+            self.use_latent_normal = getattr(args, "use_latent_normal", False)
+            if self.use_latent_normal:
+                self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+            else:
+                self.role_latent = th.rand(self.n_roles, self.args.action_latent_dim).to(args.device)
             self.mask_before_softmax = args.mask_before_softmax
             self.forward = self.continuous_forward
-            self.select_actions = self.select_actions_continuous 
+            self.select_actions = self.select_actions_continuous
             self.kl_loss = None
-            self.use_latent_normal = getattr(args, "use_latent_normal", False)
-
 
     def select_actions_continuous(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         with th.no_grad():
@@ -71,25 +77,26 @@ class ROLEMAC:
         # Chose a role and then an action, (agent_outputs are masked)
         with th.no_grad():
             (agent_outputs, _), (_, _) = self.forward(ep_batch, t=t_ep, test_mode=test_mode, t_env=t_env)
-            
+
             avail_actions = ep_batch["avail_actions"][:, t_ep]
-            
+
             chosen_actions = self.action_selector.select_action(agent_outputs[bs], avail_actions[bs], t_env,
                                                                 test_mode=test_mode)
-                                                                
-            selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)  
+
+            selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)
 
         return chosen_actions.detach(), selected_roles[bs].detach()
 
     def get_avail_actions_role(self, batch_size):
         # self.selected_roles [BS*n_agents]
-        role_index= self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, self.n_actions).long()
-        role_avail_actions = th.gather(self.role_action_spaces.unsqueeze(0).expand(batch_size * self.n_agents, -1, -1), dim=1, index= role_index)
-        role_avail_actions = role_avail_actions[:, 0] 
+        role_index = self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, self.n_actions).long()
+        role_avail_actions = th.gather(self.role_action_spaces.unsqueeze(0).expand(batch_size * self.n_agents, -1, -1),
+                                       dim=1, index=role_index)
+        role_avail_actions = role_avail_actions[:, 0]
         return role_avail_actions.view(batch_size, self.n_agents, -1)
 
     def discrete_forward(self, ep_batch, t, test_mode=False, t_env=None):
-        
+
         # self.action_selector.logger = self.logger
         avail_actions = ep_batch["avail_actions"][:, t]
 
@@ -105,25 +112,25 @@ class ROLEMAC:
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-            role_pis =  self.softmax_roles(role_outputs, batch_size, test_mode = test_mode)
+            role_pis = self.softmax_roles(role_outputs, batch_size, test_mode=test_mode)
             # Get Index of the role of each agent
             selected_roles, log_p_role = self.role_selector.select_role(role_pis, test_mode=test_mode,
                                                                         t_env=t_env)
-            
+
             self.selected_roles = selected_roles
 
             self.role_avail_actions = self.get_avail_actions_role(batch_size)
-            
+
             selected_roles = self.selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
 
             if self.use_role_value:
                 log_p_role = log_p_role.view(batch_size, self.n_agents)
-            else: 
+            else:
                 log_p_role = th.log(role_pis.view(batch_size, self.n_agents, -1))
 
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
-        
+
         (pi_action, log_p_action) = self.discrete_actions_forward(batch_size, avail_actions, t_env, test_mode)
 
         return (pi_action, log_p_action), (selected_roles, log_p_role)
@@ -134,32 +141,29 @@ class ROLEMAC:
 
         agent_inputs = self._build_inputs(ep_batch, t)
         batch_size = ep_batch.batch_size
-        
-        self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
 
-        agent_inputs = self._build_inputs(ep_batch, t)
-        batch_size = ep_batch.batch_size
+        self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
 
         selected_roles = None
         log_p_role = None
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-            role_pis =  self.softmax_roles(role_outputs, batch_size, test_mode = test_mode)
+            role_pis = self.softmax_roles(role_outputs, batch_size, test_mode=test_mode)
             # Get Index of the role of each agent
             selected_roles, log_p_role = self.role_selector.select_role(role_pis, test_mode=test_mode,
                                                                         t_env=t_env)
-            self.selected_roles = selected_roles.squeeze(-1)
+            self.selected_roles = selected_roles  # .squeeze(-1)
             selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
 
             if self.use_role_value:
                 log_p_role = log_p_role.view(batch_size, self.n_agents)
-            else: 
+            else:
                 log_p_role = th.log(role_pis.view(batch_size, self.n_agents, -1))
 
         # compute individual hidden_states for each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)
-        
+
         (pi_action, log_p_action) = self.continuos_actions_forward(batch_size, avail_actions, t_env, test_mode)
 
         return (pi_action, log_p_action), (selected_roles, log_p_role)
@@ -171,10 +175,11 @@ class ROLEMAC:
         for role_i in range(self.n_roles):
             # [bs * n_agents, n_actions]
             hidden_states = self.hidden_states.view(batch_size, self.n_agents, -1)
-            dist_params = self.roles[role_i](hidden_states)
+            mu, sigma = self.roles[role_i](hidden_states)
             prior = self.roles[role_i].prior
-            pi_action, log_p_action_taken, dkl_loss = self.action_selector.select_action(*dist_params, prior=prior,
-                                                                           test_mode=test_mode, t_env = t_env)
+            pi_action, log_p_action_taken, dkl_loss = self.action_selector.select_action(mu, sigma, prior=prior,
+                                                                                         test_mode=test_mode,
+                                                                                         t_env=t_env)
 
             actions.append(pi_action)
 
@@ -186,22 +191,23 @@ class ROLEMAC:
             if self.use_latent_normal:
                 kl_loss = th.stack(kl_loss, dim=-1)  # [bs*n_agents, n_roles]
                 kl_loss = kl_loss.view(batch_size * self.n_agents, -1)
-                kl_loss = kl_loss.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
+                kl_loss = kl_loss.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=-1)
                 kl_loss = kl_loss[:, 0]
                 kl_loss = kl_loss.view(batch_size, self.n_agents)
                 self.kl_loss = kl_loss
             log_p_action = th.stack(log_p_action, dim=-1)  # [bs*n_agents, n_roles]
             log_p_action = log_p_action.view(batch_size * self.n_agents, -1)
-            log_p_action = log_p_action.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=1)
+            log_p_action = log_p_action.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=-1)
             log_p_action = log_p_action[:, 0]
             log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]
         actions = th.stack(actions, dim=-1)  # [bs*n_agents, dim_actions, n_roles]
         actions = actions.view(batch_size * self.n_agents, self.n_actions, -1)
 
-        actions = actions.gather(index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles), dim=-1)
+        actions = actions.gather(
+            index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles), dim=-1)
         actions = actions[..., 0]
         actions = actions.view(batch_size, self.n_agents, self.n_actions)
-        
+
         return actions, log_p_action
 
     def discrete_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
@@ -233,7 +239,7 @@ class ROLEMAC:
         if not test_mode:
             # Epsilon floor
             epsilon_action_num = role_outs.size(-1)
-            
+
             role_outs = ((1 - self.role_selector.epsilon) * role_outs
                          + th.ones_like(role_outs) * self.role_selector.epsilon / epsilon_action_num)
 
@@ -249,7 +255,7 @@ class ROLEMAC:
         if getattr(self.args, "mask_before_softmax", True):
             # Make the logits for unavailable actions very negative to minimize their affect on the softmax
             reshaped_avail_actions = avail_actions.reshape(batch_size * self.n_agents, -1)
-            
+
             agent_outs[reshaped_avail_actions == 0] = -1e11
 
         agent_outs = F.softmax(agent_outs, dim=-1)
@@ -267,7 +273,7 @@ class ROLEMAC:
             if getattr(self.args, "mask_before_softmax", True):
                 # Zero out the unavailable actions
                 agent_outs[reshaped_avail_actions == 0] = 0.0
-            
+
         return agent_outs.view(batch_size, self.n_agents, -1)
 
     def update_prior(self, role_i, mu, sigma):
@@ -347,7 +353,7 @@ class ROLEMAC:
 
         self.action_encoder.load_state_dict(th.load(f"{path}/action_encoder.th",
                                                     map_location=lambda storage, loc: storage))
-        
+
         self.role_latent = th.load(f"{path}/role_latent.pt",
                                    map_location=lambda storage, loc: storage).to(self.args.device)
         self.action_repr = th.load(f"{path}/action_repr.pt",
@@ -382,10 +388,10 @@ class ROLEMAC:
         if self.args.obs_agent_id:
             inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1))
 
-        inputs = th.cat([x.reshape(bs*self.n_agents, -1) for x in inputs], dim=1)
+        inputs = th.cat([x.reshape(bs * self.n_agents, -1) for x in inputs], dim=1)
         return inputs
 
-    def _get_input_shape(self, scheme):
+    def _get_input_shape(self, scheme): # Continuous
         input_shape = scheme["obs"]["vshape"]
 
         # Add agent ID to input
@@ -429,7 +435,7 @@ class ROLEMAC:
         o_spaces = copy.deepcopy(spaces)
         spaces = []
 
-        for space_i ,space in enumerate(o_spaces):
+        for space_i, space in enumerate(o_spaces):
             _space = copy.deepcopy(space)
             _space[0] = 0.
             _space[1] = 0.
@@ -446,22 +452,22 @@ class ROLEMAC:
         spaces = np.unique(spaces, axis=0)
         spaces = list(spaces)
         n_roles = len(spaces)
-        
+
         cyclic_spaces = cycle(spaces)
-        
+
         while n_roles < self.n_roles:
-            spaces.append(next(cyclic_spaces)) 
+            spaces.append(next(cyclic_spaces))
             n_roles += 1
 
         if n_roles > self.n_roles:
             if not getattr(self.args, 'use_role_value', False):
                 # merge clusters
-                sorted_spaces = sorted(spaces, key = lambda x: -x.sum())
-                cyclic_roles = cycle(reversed(range(self.n_roles))) # cycle from smaller to bigger spaces
+                sorted_spaces = sorted(spaces, key=lambda x: -x.sum())
+                cyclic_roles = cycle(reversed(range(self.n_roles)))  # cycle from smaller to bigger spaces
                 for small_space in sorted_spaces[self.n_roles:]:
                     i = next(cyclic_roles)
                     # combine the smallest spaces
-                    space_comb = np.minimum(sorted_spaces[i] + small_space, 1)  
+                    space_comb = np.minimum(sorted_spaces[i] + small_space, 1)
                     sorted_spaces[i] = space_comb
                 spaces = sorted_spaces[:self.n_roles]
             else:
@@ -471,14 +477,14 @@ class ROLEMAC:
                     if self.args.use_cuda:
                         self.roles[-1].cuda()
                 self.n_roles = n_roles
-        
+
         print('>>> Role Action Spaces', spaces)
 
         for role_i, space in enumerate(spaces):
             self.roles[role_i].update_action_space(space)
 
         self.role_action_spaces = th.Tensor(np.array(spaces)).to(self.args.device).float()  # [n_roles, n_actions]
-        
+
         self.role_latent = th.matmul(self.role_action_spaces, action_repr) / self.role_action_spaces.sum(dim=-1,
                                                                                                          keepdim=True)
         self.role_latent = self.role_latent.detach().clone()

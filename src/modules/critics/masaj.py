@@ -21,9 +21,9 @@ class MASAJCritic(nn.Module):
 
         self.dim_out = 1 if args.continuous_actions else self.n_actions
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 128)
-        self.fc2 = nn.Linear(128, 128)
-        self.fc3 = nn.Linear(128, self.dim_out)
+        self.fc1 = nn.Linear(self.input_shape, args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(args.rnn_hidden_dim, self.dim_out)
 
     def forward(self, inputs, actions=None):
         if actions is not None:
@@ -71,11 +71,9 @@ class MASAJRoleCritic(nn.Module):
         self.dim_out = 1 if args.use_role_value else self.n_roles
 
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, self.dim_out)
-
-        # TODO: RNN optional
+        self.fc1 = nn.Linear(self.input_shape, args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(args.rnn_hidden_dim, self.dim_out)
 
     def forward(self, inputs, roles=None):
         if roles is not None:

@@ -140,15 +140,13 @@ class GaussianActionSelector():
             picked_actions = mu
             log_p_pi = None
         else:
-            #dst = th.distributions.MultivariateNormal(mu.view(-1, mu.shape[-1]), sigma.view(-1, mu.shape[-1],
+            # dst = th.distributions.MultivariateNormal(mu.view(-1, mu.shape[-1]), sigma.view(-1, mu.shape[-1],
             # mu.shape[-1]))
             dst = th.distributions.Normal(mu, sigma)
 
-            picked_actions = dst.sample().view(*mu.shape)
+            picked_actions = dst.rsample()  # view(*mu.shape)
             log_p_pi = dst.log_prob(picked_actions).sum(axis=-1)
             log_p_pi -= (2 * (np.log(2) - picked_actions - F.softplus(-2 * picked_actions))).sum(axis=-1)
-
-
 
         picked_actions = th.tanh(picked_actions)
         picked_actions = self.unit2actions * picked_actions + self.actions_min
@@ -183,14 +181,14 @@ class GaussianLatentActionSelector():
     def select_action(self, mu, sigma, t_env, prior, test_mode=False):
         dkl_loss = None
         latent_dist = Normal(mu, sigma)
-        latent_action = mu if test_mode else latent_dist.sample()
+        latent_action = mu if test_mode else latent_dist.rsample()
         log_p_latent = latent_dist.log_prob(latent_action).sum(dim=-1)
         if not test_mode and prior:
             if self.use_latent_normal:  # dkl distributions
                 # [bs, action_latent] [n_actions, action_latent]
                 dkl_loss = self.dkl(latent_dist, prior)
             else:
-                sample = prior.sample()
+                sample = prior.rsample()
                 log_p_prior = prior.log_prob(sample).sum(dim=-1)
                 dkl_loss = self.dkl(log_p_latent, log_p_prior)
             dkl_loss = th.max(dkl_loss, self.threshold)  # don't enforce the dkl inside the threshold

@@ -6,7 +6,7 @@ mac: "role_controller" # Basic controller
 env: "mujoco_multi" # Environment name
 env_args: {} # Arguments for the environment
 batch_size_run: 1 # Number of environments to run in parallel
-test_nepisode: 20 # Number of episodes to test for
+test_nepisode: 10 # Number of episodes to test for
 test_interval: 2000 # Test after {} timesteps have passed
 test_greedy: True # Use greedy evaluation (if False, will set epsilon floor to 0
 log_interval: 2000 # Log summary of stats after every {} timesteps
@@ -38,7 +38,7 @@ grad_norm_clip: 10 # Reduce magnitude of gradients above this L2 norm
 
 # --- Agent parameters ---
 agent: "rnn" # Default rnn agent
-rnn_hidden_dim: 128 # Size of hidden state for default rnn agent
+rnn_hidden_dim: 64 # Size of hidden state for default rnn agent
 obs_agent_id: True # Include the agent's one_hot id in the observation
 obs_last_action: True # Include the agent's last action (one_hot) in the observation
 
