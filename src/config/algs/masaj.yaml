@@ -8,6 +8,7 @@ learner: "masaj_learner"
 agent: "rode"
 role_selector: "multinomial_role"
 role: "msj_discrete"
+optimizer: "rmsprop"
 
 # Ambient dependent
 continuous_actions: False

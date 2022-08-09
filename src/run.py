@@ -149,6 +149,7 @@ def run_sequential(args, logger):
         args.actions_max_numpy = args.actions_max_cpu.cpu().numpy()
         print(args.actions_min_numpy)
         print(args.actions_max_numpy)
+        print(args.actions2unit_coef)
         def actions_from_unit_box(actions):
             if isinstance(actions, np.ndarray):
                 return args.actions2unit_coef_numpy * actions + args.actions_min_numpy
@@ -175,7 +176,7 @@ def run_sequential(args, logger):
         elif all([isinstance(act_space, spaces.Tuple) for act_space in args.action_spaces]):
             actions_vshape = 1 if not args.actions_dtype == np.float32 else \
                 max([i.spaces[0].shape[0] + i.spaces[1].shape[0] for i in args.action_spaces])
-        dim_ac = args.n_actionss
+        dim_ac = args.n_actions
 
 
     

@@ -8,6 +8,7 @@ learner: "masaj_learner"
 agent: "rode" # TODO: malaya
 role_selector: "multinomial_role"
 role: "msj"
+optimizer: "adam"
 
 # Ambient dependent
 continuous_actions: True
@@ -19,7 +20,7 @@ action_encoder: "obs_reward"
 
 # Epsilon scheduler and masking
 epsilon_start: 1.0
-epsilon_finish: .05
+epsilon_finish: 0
 epsilon_anneal_time: 70000
 epsilon_anneal_time_exp: 70000
 mask_before_softmax: True
@@ -27,14 +28,16 @@ mask_before_softmax: True
 # Learners hyperparameters
 batch_size: 100
 target_update_interval: 1
-lr: 0.001
-c_lr: 0.001
-v_lr: 0.001
+lr: 0.0005
+c_lr: 0.0005
+v_lr: 0.0005
 td_lambda: 0.8
 role_interval: 5
-role_action_spaces_update_start: 50000
+role_action_spaces_update_start: 0 #50000
 use_role_value: False
 double_value: False
+optimizer_epsilon: 0.01 #New
+grad_norm_clip: 0.5
 
 # Network structure hyper-parameters
 rnn_hidden_dim: 128
@@ -43,14 +46,18 @@ n_roles: 3
 n_role_clusters: 5
 state_latent_dim: 32
 action_latent_dim: 20
-mixing_embed_dim: 32
+mixing_embed_dim: 64
 n_head: 4  
 
 # Buffer hyper-parameters
-buffer_size: 1000
+buffer_size: 5000
 burn_in_period: 1000 #100
 
 # Logging parameters
 log_interval: 5000 # Log summary of stats after every {} timesteps
 runner_log_interval: 5000 # Log runner stats (not test stats) every {} timesteps
 learner_log_interval: 5000 # Log training stats every {} timesteps
+
+# Enviroments parameters
+env_args:
+  state_last_action: False

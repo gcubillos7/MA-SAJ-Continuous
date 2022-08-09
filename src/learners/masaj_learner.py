@@ -104,30 +104,49 @@ class MASAJ_Learner:
         self.role_critic_params1 = list(self.role_critic1.parameters()) + list(self.role_mixer1.parameters())
         self.role_critic_params2 = list(self.role_critic2.parameters()) + list(self.role_mixer2.parameters())
 
-        self.p_optimizer = Adam(params=self.agent_params, lr=args.lr, #alpha=args.optim_alpha,
-                                eps=args.optim_eps)
+        if getattr(self.args, "optimizer", "rmsprop") == "rmsprop":
 
-        self.c_optimizer1 = Adam(params=self.critic_params1 + self.role_critic_params1, lr=args.c_lr,
-                                    #alpha=args.optim_alpha,
-                                    eps=args.optim_eps)
+            self.p_optimizer = RMSprop(params=self.agent_params, lr=args.lr, alpha=args.optim_alpha,
+                                       eps=args.optim_eps)
 
-        self.c_optimizer2 = Adam(params=self.critic_params2 + self.role_critic_params2, lr=args.c_lr,
-                                    #alpha=args.optim_alpha,
-                                    eps=args.optim_eps)
+            self.c_optimizer1 = RMSprop(params=self.critic_params1 + self.role_critic_params1, lr=args.c_lr,
+                                        alpha=args.optim_alpha, eps=args.optim_eps)
 
-        if self.use_role_value or self.continuous_actions:
-            self.val_optimizer = Adam(params=self.value_params, lr=args.v_lr, #alpha=args.optim_alpha,
-                                         eps=args.optim_eps)
-            if self.double_value:
-                self.val_optimizer2 = Adam(params=self.value_params2, lr=args.v_lr,  # alpha=args.optim_alpha,
-                                            eps=args.optim_eps)
+            self.c_optimizer2 = RMSprop(params=self.critic_params2 + self.role_critic_params2, lr=args.c_lr,
+                                        alpha=args.optim_alpha, eps=args.optim_eps)
+
+            if self.use_role_value or self.continuous_actions:
+                self.val_optimizer = RMSprop(params=self.value_params, lr=args.v_lr, alpha=args.optim_alpha,
+                                             eps=args.optim_eps)
+                if self.double_value:
+                    self.val_optimizer2 = RMSprop(params=self.value_params2, lr=args.v_lr, alpha=args.optim_alpha,
+                                                  eps=args.optim_eps)
+
+        elif getattr(self.args, "optimizer", "rmsprop") == "adam":
+            # TODO: conciliate both epsilons
+            self.p_optimizer = Adam(params=self.agent_params, lr=args.lr,
+                                    eps=getattr(args, "optimizer_epsilon", 10E-8))
+
+            self.c_optimizer1 = Adam(params=self.critic_params1 + self.role_critic_params1, lr=args.c_lr,
+                                     # alpha=args.optim_alpha,
+                                     eps=getattr(args, "optimizer_epsilon", 10E-8))
+
+            self.c_optimizer2 = Adam(params=self.critic_params2 + self.role_critic_params2, lr=args.c_lr,
+                                     eps=getattr(args, "optimizer_epsilon", 10E-8))
+
+            if self.use_role_value or self.continuous_actions:
+                self.val_optimizer = Adam(params=self.value_params, lr=args.v_lr,
+                                          eps=getattr(args, "optimizer_epsilon", 10E-8))
+                if self.double_value:
+                    self.val_optimizer2 = Adam(params=self.value_params2, lr=args.v_lr,
+                                               eps=getattr(args, "optimizer_epsilon", 10E-8))
 
         self.role_interval = args.role_interval
         self.device = args.device
 
         self.action_encoder_params = list(self.mac.action_encoder_params())
         self.action_encoder_optimizer = Adam(params=self.action_encoder_params, lr=args.lr,
-                                                #alpha=args.optim_alpha,
+                                             # alpha=args.optim_alpha,
                                              eps=args.optim_eps)
         self._build_ent_coeficient(args)
 
@@ -795,8 +814,8 @@ class MASAJ_Learner:
                 self.target_role_value.load_state_dict(self.role_value.state_dict())
                 if self.double_value:
                     self.target_role_value2.load_state_dict(self.role_value2.state_dict())
-
-        # self.logger.console_logger.info("Updated target network")
+        if self.args.target_update_interval>2:
+            self.logger.console_logger.info("Updated target network")
 
     def cuda(self):
         self.mac.cuda()

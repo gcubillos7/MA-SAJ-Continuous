@@ -147,9 +147,10 @@ class GaussianActionSelector():
             picked_actions = dst.rsample()  # view(*mu.shape)
             log_p_pi = dst.log_prob(picked_actions).sum(axis=-1)
             log_p_pi -= (2 * (np.log(2) - picked_actions - F.softplus(-2 * picked_actions))).sum(axis=-1)
-
         picked_actions = th.tanh(picked_actions)
-        picked_actions = self.unit2actions * picked_actions + self.actions_min
+        # picked_actions = self.unit2actions * picked_actions + self.actions_min
+
+        picked_actions = ((self.unit2actions*0.5) * (picked_actions+1)) + self.actions_min
 
         return picked_actions, log_p_pi, dkl_loss
 
