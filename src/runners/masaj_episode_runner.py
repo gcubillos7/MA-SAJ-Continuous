@@ -87,6 +87,10 @@ class EpisodeRunner:
         return reward, terminated, env_info
 
     def step_default(self, actions):
+        ## Added
+        if type(actions)!=np.ndarray:
+            actions = actions.cpu()
+        ##
         reward, terminated, env_info = self.env.step(actions)
         return reward, terminated, env_info
         

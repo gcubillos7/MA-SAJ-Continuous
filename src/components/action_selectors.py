@@ -151,7 +151,6 @@ class GaussianActionSelector():
         # picked_actions = self.unit2actions * picked_actions + self.actions_min
 
         picked_actions = ((self.unit2actions*0.5) * (picked_actions+1)) + self.actions_min
-
         return picked_actions, log_p_pi, dkl_loss
 
 

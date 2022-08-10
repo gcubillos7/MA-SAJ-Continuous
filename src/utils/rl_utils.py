@@ -14,7 +14,8 @@ def build_td_lambda_targets(rewards, terminated, mask, target_qs, n_agents, gamm
     # Returns lambda-return from t=0 to t=T-1, i.e. in [..., B*T-1, A]
     return ret [:, 0:-1]
 
-# From: https://github.com/DLR-RM/stable-baselines3/blob/ef10189d80dbb2efb3b5391cba4eb3c2ab5c7aae/stable_baselines3/common/utils.py#L413
+# From: https://github.com/DLR-RM/stable-baselines3/blob/ef10189d80dbb2efb3b5391cba4eb3c2ab5c7aae/stable_baselines3
+# /common/utils.py#L413
 def polyak_update(
     params: Iterable[th.nn.Parameter],
     target_params: Iterable[th.nn.Parameter],

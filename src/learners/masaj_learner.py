@@ -207,6 +207,9 @@ class MASAJ_Learner:
         mac_out: returns distribution of actions .log_p(actions)
         role_out: returns distribution over roles
         """
+
+        self.mac.flag = True # TODO: DEL
+
         # Get role policy and mac policy
         mac_out = []
         log_p_out = []
@@ -241,7 +244,7 @@ class MASAJ_Learner:
 
         with th.no_grad():
             if self.continuous_actions:
-                next_action_input = next_action
+                next_action_input = next_action.detach()
                 q_vals_taken1 = self.target_critic1.forward(target_inputs, next_action_input)  # [...]
                 q_vals_taken2 = self.target_critic2.forward(target_inputs, next_action_input)  # [...]
                 vs1, vs2 = self._get_target_value(target_inputs)  # [...]
@@ -259,7 +262,7 @@ class MASAJ_Learner:
                 vs2 = th.logsumexp(q_vals2 / alpha, dim=-1) * alpha  # [...]
 
             # Get Q joint for actions (using individual Qs and Vs)
-            q_vals1 = self.target_mixer1(q_vals_taken1, states, actions=next_action_input, vs=vs1)  # collapses n_agents
+            q_vals1 = self.target_mixer1(q_vals_taken1, states, actions=next_action_input, vs= vs1)  # collapses n_agents
             q_vals2 = self.target_mixer2(q_vals_taken2, states, actions=next_action_input, vs=vs2)  # collapses n_agents
             target_q_vals = th.min(q_vals1, q_vals2)
 
@@ -299,7 +302,7 @@ class MASAJ_Learner:
 
         # Get Q and V values for actions
         if self.continuous_actions:
-            action_input = action
+            action_input = action.detach()
             q_vals_taken1 = self.critic1.forward(inputs, action_input)  # last q value isn't used
             q_vals_taken2 = self.critic2.forward(inputs, action_input)  # [...]
             with th.no_grad():
@@ -387,7 +390,7 @@ class MASAJ_Learner:
         with th.no_grad():
             # Get Q values
             if self.continuous_actions:
-                action_input = action
+                action_input = action.detach()
                 q_vals1 = self.critic1.forward(inputs, action_input)
                 q_vals2 = self.critic2.forward(inputs, action_input)
                 if self.double_value:
@@ -555,8 +558,8 @@ class MASAJ_Learner:
                 v_actions2 = vs2
                 v_act_target2 = F.mse_loss(v_actions2, (q2 - alpha * log_p_action).detach(), reduction='none')
                 v_act_loss2 = (v_act_target2 * mask).sum() / mask.sum()
-
-            act_target = (alpha * log_p_action - q_min)
+            #  print('log_p_action', log_p_action) # TODO: DEL
+            act_target = (alpha * log_p_action - q_min.detach())
 
         else:
             act_target = (pi * (alpha * log_p_action - q_vals)).sum(dim=-1)
@@ -571,9 +574,6 @@ class MASAJ_Learner:
             role_target = (alpha * log_p_role - q_vals_role)
             v_role_target = F.mse_loss(v_role, (q_vals_role - alpha * log_p_role).detach(), reduction='none')
             v_role_loss = (v_role_target * role_mask).sum() / role_mask.sum()
-            # print('v_role', v_role_loss)
-            # pending
-            # slope
         else:
             # policy target for discrete actions (from Soft Actor-Critic for Discrete Action Settings)
             role_target = (pi_role * (alpha * log_p_role - q_vals_role)).sum(dim=-1)
@@ -591,7 +591,6 @@ class MASAJ_Learner:
             loss_policy += masked_kl_loss
 
         # Optimize policy
-        # retain_graph = True if (self.use_role_value or self.continuous_actions) else False
         self.p_optimizer.zero_grad()
         loss_policy.backward()
         agent_grad_norm = th.nn.utils.clip_grad_norm_(self.agent_params, self.args.grad_norm_clip)
@@ -620,8 +619,8 @@ class MASAJ_Learner:
             if self.continuous_actions:
 
                 self.logger.log_stat("v_act_loss", v_act_loss.item(), t_env)
-                self.logger.log_stat("action_out_min", action_out.min().item(), t_env)
-                self.logger.log_stat("action_out_max", action_out.max().item(), t_env)
+                self.logger.log_stat("action_out_min", action_out.min().item(), t_env) # TODO: DEL
+                self.logger.log_stat("action_out_max", action_out.max().item(), t_env) # TODO: DEL
                 if self.double_value:
                     self.logger.log_stat("v_act_loss2", v_act_loss2.item(), t_env)
 
@@ -629,8 +628,9 @@ class MASAJ_Learner:
             self.logger.log_stat("alpha", alpha, t_env)
             self.logger.log_stat("act_entropy", entropies, t_env)
             self.logger.log_stat("role_entropy", role_entropies, t_env)
-            # self.logger.log_stat("min_log_p_role", (log_p_role*role_mask).min().detach().cpu().item(), t_env)
-            # self.logger.log_stat("min_log_p_act", (log_p_action * mask).min().detach().cpu().item(), t_env)
+
+            self.logger.log_stat("min_log_p_act", (log_p_action).min().detach().cpu().item(), t_env) # TODO: DEL
+            self.logger.log_stat("min_log_p_role", (log_p_role).min().detach().cpu().item(), t_env) # TODO: DEL
             self.log_stats_t = t_env
 
     def train_critic(self, batch, t_env, alpha):
@@ -737,6 +737,9 @@ class MASAJ_Learner:
         loss2 = (masked_td_error2_role ** 2).sum() / role_mask.sum()
 
         # 0-out the targets that came from padded data
+        if t_env - self.log_stats_t >= self.args.learner_log_interval: # TODO: DEL
+            self.logger.log_stat("critic_loss_role", loss1.item(), t_env)
+
         mask = mask.expand_as(td_error1_act)
         masked_td_error1 = td_error1_act * mask
         loss1 += (masked_td_error1 ** 2).sum() / mask.sum()
@@ -746,31 +749,42 @@ class MASAJ_Learner:
         # Optimize
         self.c_optimizer1.zero_grad()
         loss1.backward()
-        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params1 + self.role_critic_params1,
-                                                self.args.grad_norm_clip)
+        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params1, self.args.grad_norm_clip)
+        grad_norm_role = th.nn.utils.clip_grad_norm_(self.role_critic_params1, self.args.grad_norm_clip)
         self.c_optimizer1.step()
 
         self.c_optimizer2.zero_grad()
         loss2.backward()
-        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params2 + self.role_critic_params2,
-                                                self.args.grad_norm_clip)
+        grad_norm = th.nn.utils.clip_grad_norm_(self.critic_params2, self.args.grad_norm_clip)
+        grad_norm_role = th.nn.utils.clip_grad_norm_(self.role_critic_params2, self.args.grad_norm_clip)
         self.c_optimizer2.step()
 
         if t_env - self.log_stats_t >= self.args.learner_log_interval:
-            self.logger.log_stat("loss", loss1.item(), t_env)
-            self.logger.log_stat("grad_norm", grad_norm.item(), t_env)
+            self.logger.log_stat("critic_loss", loss1.item(), t_env)
+            self.logger.log_stat("critic_grad_norm", grad_norm.item(), t_env)
+            self.logger.log_stat("critic_grad_norm_role", grad_norm_role.item(), t_env)
             mask_elems = mask.sum().item()
             self.logger.log_stat("td_error_abs", (masked_td_error1.abs().sum().item() / mask_elems), t_env)
             self.logger.log_stat("q_taken_mean",
                                  (q1_act_taken * mask).sum().item() / (mask_elems * self.args.n_agents), t_env)
+
             self.logger.log_stat("target_mean", (targets_act * mask).sum().item() / (mask_elems * self.args.n_agents),
                                  t_env)
+
+            self.logger.log_stat("log_p_action_taken_max", log_p_action_taken.max().detach().cpu().item(),
+                                 t_env) # TODO
+
+            self.logger.log_stat("log_p_action_taken_min", log_p_action_taken.min().detach().cpu().item() ,
+                                 t_env) # TODO
+
+            self.logger.log_stat("action_out_min", actions_taken.min().item(), t_env)  # TODO: DEL
+            self.logger.log_stat("action_out_max", actions_taken.max().item(), t_env)  # TODO: DEL
 
     def _update_targets(self):
 
         if getattr(self.args, "polyak_update", False):
 
-            tau = getattr(self.args, "tau", 0.005)
+            tau = getattr(self.args, "tau", 0.001)
             polyak_update(self.critic1.parameters, self.target_critic1.parameters, tau)
             polyak_update(self.critic2.parameters, self.target_critic2.parameters, tau)
 

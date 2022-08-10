@@ -150,6 +150,7 @@ def run_sequential(args, logger):
         print(args.actions_min_numpy)
         print(args.actions_max_numpy)
         print(args.actions2unit_coef)
+
         def actions_from_unit_box(actions):
             if isinstance(actions, np.ndarray):
                 return args.actions2unit_coef_numpy * actions + args.actions_min_numpy
@@ -178,8 +179,6 @@ def run_sequential(args, logger):
                 max([i.spaces[0].shape[0] + i.spaces[1].shape[0] for i in args.action_spaces])
         dim_ac = args.n_actions
 
-
-    
     # Default/Base scheme
 
     scheme = {

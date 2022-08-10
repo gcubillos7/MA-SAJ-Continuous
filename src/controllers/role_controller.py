@@ -19,7 +19,7 @@ from sklearn.cluster import KMeans
 # This multi-agent controller shares parameters between agents
 class ROLEMAC:
     def __init__(self, scheme, groups, args):
-
+        self.flag = True
         self.args = args
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
@@ -103,9 +103,6 @@ class ROLEMAC:
         agent_inputs = self._build_inputs(ep_batch, t)
         batch_size = ep_batch.batch_size
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
-
-        agent_inputs = self._build_inputs(ep_batch, t)
-        batch_size = ep_batch.batch_size
 
         selected_roles = None
         log_p_role = None
@@ -207,7 +204,6 @@ class ROLEMAC:
             index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles), dim=-1)
         actions = actions[..., 0]
         actions = actions.view(batch_size, self.n_agents, self.n_actions)
-
         return actions, log_p_action
 
     def discrete_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
