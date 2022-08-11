@@ -28,16 +28,18 @@ mask_before_softmax: True
 # Learners hyperparameters
 batch_size: 100
 target_update_interval: 1
-lr: 0.0005
-c_lr: 0.0005
-v_lr: 0.0005
+lr: 0.001
+c_lr: 0.001 #0.0005
+v_lr: 0.001
 td_lambda: 0 #0.8
 role_interval: 5
 role_action_spaces_update_start: 0 #50000
 use_role_value: False
 double_value: False
 optimizer_epsilon: 0.01 #New
-grad_norm_clip: 0.5
+grad_norm_clip: 10 #0.5
+polyak_update: True
+alpha_start: 20
 
 # Network structure hyper-parameters
 rnn_hidden_dim: 128
@@ -51,7 +53,7 @@ n_head: 4
 
 # Buffer hyper-parameters
 buffer_size: 5000
-burn_in_period: 100 #100
+burn_in_period: 1000 #100
 
 # Logging parameters
 log_interval: 5000 # Log summary of stats after every {} timesteps

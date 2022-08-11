@@ -9,6 +9,7 @@ from modules.mixers.fop import FOPMixer
 from utils.rl_utils import build_td_lambda_targets, polyak_update
 from torch.optim import RMSprop, Adam
 from modules.critics.value import ValueNet, RoleValueNet
+from components.epsilon_schedules import DecayThenFlatSchedule
 
 
 # rnn critic https://github.com/AnujMahajanOxf/MAVEN/blob/master/maven_code/src/modules/critics/coma.py
@@ -208,7 +209,7 @@ class MASAJ_Learner:
         role_out: returns distribution over roles
         """
 
-        self.mac.flag = True # TODO: DEL
+        self.mac.flag = True  # TODO: DEL
 
         # Get role policy and mac policy
         mac_out = []
@@ -262,7 +263,7 @@ class MASAJ_Learner:
                 vs2 = th.logsumexp(q_vals2 / alpha, dim=-1) * alpha  # [...]
 
             # Get Q joint for actions (using individual Qs and Vs)
-            q_vals1 = self.target_mixer1(q_vals_taken1, states, actions=next_action_input, vs= vs1)  # collapses n_agents
+            q_vals1 = self.target_mixer1(q_vals_taken1, states, actions=next_action_input, vs=vs1)  # collapses n_agents
             q_vals2 = self.target_mixer2(q_vals_taken2, states, actions=next_action_input, vs=vs2)  # collapses n_agents
             target_q_vals = th.min(q_vals1, q_vals2)
 
@@ -619,8 +620,8 @@ class MASAJ_Learner:
             if self.continuous_actions:
 
                 self.logger.log_stat("v_act_loss", v_act_loss.item(), t_env)
-                self.logger.log_stat("action_out_min", action_out.min().item(), t_env) # TODO: DEL
-                self.logger.log_stat("action_out_max", action_out.max().item(), t_env) # TODO: DEL
+                self.logger.log_stat("action_out_min", action_out.min().item(), t_env)  # TODO: DEL
+                self.logger.log_stat("action_out_max", action_out.max().item(), t_env)  # TODO: DEL
                 if self.double_value:
                     self.logger.log_stat("v_act_loss2", v_act_loss2.item(), t_env)
 
@@ -629,8 +630,8 @@ class MASAJ_Learner:
             self.logger.log_stat("act_entropy", entropies, t_env)
             self.logger.log_stat("role_entropy", role_entropies, t_env)
 
-            self.logger.log_stat("min_log_p_act", (log_p_action).min().detach().cpu().item(), t_env) # TODO: DEL
-            self.logger.log_stat("min_log_p_role", (log_p_role).min().detach().cpu().item(), t_env) # TODO: DEL
+            self.logger.log_stat("min_log_p_act", (log_p_action).min().detach().cpu().item(), t_env)  # TODO: DEL
+            self.logger.log_stat("min_log_p_role", (log_p_role).min().detach().cpu().item(), t_env)  # TODO: DEL
             self.log_stats_t = t_env
 
     def train_critic(self, batch, t_env, alpha):
@@ -737,7 +738,7 @@ class MASAJ_Learner:
         loss2 = (masked_td_error2_role ** 2).sum() / role_mask.sum()
 
         # 0-out the targets that came from padded data
-        if t_env - self.log_stats_t >= self.args.learner_log_interval: # TODO: DEL
+        if t_env - self.log_stats_t >= self.args.learner_log_interval:  # TODO: DEL
             self.logger.log_stat("critic_loss_role", loss1.item(), t_env)
 
         mask = mask.expand_as(td_error1_act)
@@ -772,10 +773,10 @@ class MASAJ_Learner:
                                  t_env)
 
             self.logger.log_stat("log_p_action_taken_max", log_p_action_taken.max().detach().cpu().item(),
-                                 t_env) # TODO
+                                 t_env)  # TODO
 
-            self.logger.log_stat("log_p_action_taken_min", log_p_action_taken.min().detach().cpu().item() ,
-                                 t_env) # TODO
+            self.logger.log_stat("log_p_action_taken_min", log_p_action_taken.min().detach().cpu().item(),
+                                 t_env)  # TODO
 
             self.logger.log_stat("action_out_min", actions_taken.min().item(), t_env)  # TODO: DEL
             self.logger.log_stat("action_out_max", actions_taken.max().item(), t_env)  # TODO: DEL
@@ -785,26 +786,26 @@ class MASAJ_Learner:
         if getattr(self.args, "polyak_update", False):
 
             tau = getattr(self.args, "tau", 0.001)
-            polyak_update(self.critic1.parameters, self.target_critic1.parameters, tau)
-            polyak_update(self.critic2.parameters, self.target_critic2.parameters, tau)
+            polyak_update(self.critic1.parameters(), self.target_critic1.parameters(), tau)
+            polyak_update(self.critic2.parameters(), self.target_critic2.parameters(), tau)
 
-            polyak_update(self.role_critic1.parameters, self.role_target_critic1.parameters, tau)
-            polyak_update(self.role_critic2.parameters, self.role_target_critic2.parameters, tau)
+            polyak_update(self.role_critic1.parameters(), self.role_target_critic1.parameters(), tau)
+            polyak_update(self.role_critic2.parameters(), self.role_target_critic2.parameters(), tau)
 
-            polyak_update(self.mixer1.parameters, self.target_mixer1.parameters, tau)
-            polyak_update(self.mixer2.parameters, self.target_mixer2.parameters, tau)
+            polyak_update(self.mixer1.parameters(), self.target_mixer1.parameters(), tau)
+            polyak_update(self.mixer2.parameters(), self.target_mixer2.parameters(), tau)
 
-            polyak_update(self.role_mixer1.parameters, self.role_target_mixer1.parameters, tau)
-            polyak_update(self.role_mixer2.parameters, self.role_target_mixer2.parameters, tau)
+            polyak_update(self.role_mixer1.parameters(), self.role_target_mixer1.parameters(), tau)
+            polyak_update(self.role_mixer2.parameters(), self.role_target_mixer2.parameters(), tau)
 
             if self.continuous_actions:
-                polyak_update(self.value.parameters, self.target_value.parameters, tau)
+                polyak_update(self.value.parameters(), self.target_value.parameters(), tau)
                 if self.double_value:
-                    polyak_update(self.value2.parameters, self.target_value2.parameters, tau)
+                    polyak_update(self.value2.parameters(), self.target_value2.parameters(), tau)
             if self.use_role_value:
-                polyak_update(self.role_value.parameters, self.target_role_value.parameters, tau)
+                polyak_update(self.role_value.parameters(), self.target_role_value.parameters(), tau)
                 if self.double_value:
-                    polyak_update(self.role_value2.parameters, self.target_role_value2.parameters, tau)
+                    polyak_update(self.role_value2.parameters(), self.target_role_value2.parameters(), tau)
         else:
 
             self.target_critic1.load_state_dict(self.critic1.state_dict())
@@ -828,7 +829,7 @@ class MASAJ_Learner:
                 self.target_role_value.load_state_dict(self.role_value.state_dict())
                 if self.double_value:
                     self.target_role_value2.load_state_dict(self.role_value2.state_dict())
-        if self.args.target_update_interval>2:
+        if self.args.target_update_interval > 2:
             self.logger.console_logger.info("Updated target network")
 
     def cuda(self):
@@ -966,6 +967,17 @@ class MASAJ_Learner:
             self.get_alpha = lambda t_env: self.alpha.detach()
             self.target_entropy = -np.prod(self.scheme.action_space.shape).astype(np.float32)
         else:
-            self.get_alpha = lambda t_env: max(0.05, 0.5 - t_env / 200000.0)
+            alpha_anneal_time = getattr(self.args, "alpha_anneal_time", 200000)
+            alpha_start = getattr(self.args, "alpha_start", 0.5)
+            alpha_finish = getattr(self.args, "alpha_finish", 0.05)
+            alpha_decay = getattr(self.args, "alpha_decay", "linear")
+            role_action_spaces_update_start = getattr(self.args, "role_action_spaces_update_start", 0)
+            self.alpha_schedule = DecayThenFlatSchedule(alpha_start, alpha_finish, alpha_anneal_time,
+                                                        time_length_exp=alpha_anneal_time,
+                                                        role_action_spaces_update_start=role_action_spaces_update_start
+                                                        , decay=alpha_decay)
+            self.get_alpha = self.alpha_schedule.eval
+
+            # self.get_alpha = lambda t_env: max(0.05, 0.5 - t_env / 200000.0)
 
         # Default initial value of ent_coef when learned
