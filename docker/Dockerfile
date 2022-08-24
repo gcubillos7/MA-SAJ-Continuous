@@ -62,7 +62,7 @@ RUN pip install mujoco_py
 RUN pip install git+https://github.com/IDSIA/sacred.git
 
 WORKDIR /mujoco_py
-# RUN pip install git+https://github.com/schroederdewitt/multiagent_mujoco.git
+RUN pip install git+https://github.com/schroederdewitt/multiagent_mujoco.git
 # Delay moving in the entire code until the very end.
 #ENTRYPOINT ["/mujoco_py/vendor/Xdummy-entrypoint"]
 # CMD ["pytest"]

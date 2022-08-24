@@ -28,7 +28,7 @@ mask_before_softmax: True
 # Learners hyperparameters
 batch_size: 100
 target_update_interval: 1
-lr: 0.001
+lr: 0.001 #0.001
 c_lr: 0.001 #0.0005
 v_lr: 0.001
 td_lambda: 0 #0.8
@@ -37,9 +37,10 @@ role_action_spaces_update_start: 0 #50000
 use_role_value: False
 double_value: False
 optimizer_epsilon: 0.01 #New
-grad_norm_clip: 10 #0.5
+grad_norm_clip: 0.5 #0.5
 polyak_update: True
-alpha_start: 20
+alpha_start: 0.10
+alpha_finish: 0.05
 
 # Network structure hyper-parameters
 rnn_hidden_dim: 128
@@ -53,7 +54,7 @@ n_head: 4
 
 # Buffer hyper-parameters
 buffer_size: 5000
-burn_in_period: 1000 #100
+burn_in_period: 100 #100
 
 # Logging parameters
 log_interval: 5000 # Log summary of stats after every {} timesteps
@@ -64,5 +65,9 @@ learner_log_interval: 5000 # Log training stats every {} timesteps
 env_args:
   state_last_action: False
 
-obs_agent_id: False # Include the agent's one_hot id in the observation
+obs_agent_id: True # Include the agent's one_hot id in the observation
 obs_last_action: False # Include the agent's last action (one_hot) in the observation
+
+start_steps: 10000
+ou_sigma: 0.2
+act_noise: 0.1

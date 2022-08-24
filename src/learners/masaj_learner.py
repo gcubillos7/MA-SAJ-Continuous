@@ -646,6 +646,10 @@ class MASAJ_Learner:
         mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         avail_actions = batch["avail_actions"]
         roles_onehot = batch["roles_onehot"]
+        if self.continuous_actions:
+            rewards = rewards*(1/alpha)
+            alpha = 1
+
         out = self._build_role_rollout(rewards, states[:, :-1], roles_taken, roles_onehot[:, :-1], terminated, mask)
         role_rewards, role_states, roles, roles_roles_onehot, role_terminated, role_mask = out
 
@@ -736,6 +740,9 @@ class MASAJ_Learner:
         loss1 = (masked_td_error1_role ** 2).sum() / role_mask.sum()
         masked_td_error2_role = td_error2_role * role_mask
         loss2 = (masked_td_error2_role ** 2).sum() / role_mask.sum()
+
+        loss1 = loss1*0
+        loss2 = loss2*0
 
         # 0-out the targets that came from padded data
         if t_env - self.log_stats_t >= self.args.learner_log_interval:  # TODO: DEL

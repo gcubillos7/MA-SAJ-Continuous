@@ -1,5 +1,6 @@
 # from tkinter import N
 import pip
+from gym import spaces
 from modules.agents import REGISTRY as agent_REGISTRY
 from components.action_selectors import REGISTRY as action_REGISTRY
 from modules.action_encoders import REGISTRY as action_encoder_REGISTRY
@@ -48,23 +49,9 @@ class ROLEMAC:
         # Role latent and actions representations
 
         if not self.continuous_actions:
-            self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
-            self.forward = self.discrete_forward
-            self.select_actions = self.select_actions_discrete
-            np.random.seed(0)
-            self.action_repr = th.from_numpy(np.random.rand(self.n_actions, self.args.action_latent_dim)).float().to(
-                args.device)
-            self.role_action_spaces = th.ones(self.n_roles, self.n_actions).to(args.device)
+            self._build_discrete(args)
         else:
-            self.use_latent_normal = getattr(args, "use_latent_normal", False)
-            if self.use_latent_normal:
-                self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
-            else:
-                self.role_latent = th.rand(self.n_roles, self.args.action_latent_dim).to(args.device)
-            self.mask_before_softmax = args.mask_before_softmax
-            self.forward = self.continuous_forward
-            self.select_actions = self.select_actions_continuous
-            self.kl_loss = None
+            self._build_continous(args)
 
     def select_actions_continuous(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         with th.no_grad():
@@ -163,7 +150,66 @@ class ROLEMAC:
 
         (pi_action, log_p_action) = self.continuos_actions_forward(batch_size, avail_actions, t_env, test_mode)
 
+        if t_env is not None:
+            pi_action = self.add_exploration(pi_action, batch_size, t_env, test_mode)
+
         return (pi_action, log_p_action), (selected_roles, log_p_role)
+
+    def add_exploration(self, chosen_actions, batch_size, t_env, test_mode):
+        exploration_mode = getattr(self.args, "exploration_mode", "gaussian")
+        # Ornstein-Uhlenbeck:
+        if not test_mode:  # do exploration
+            if exploration_mode == "ornstein_uhlenbeck":
+                x = getattr(self, "ou_noise_state", chosen_actions.clone().zero_())
+                mu = 0
+                theta = getattr(self.args, "ou_theta", 0.15)
+                sigma = getattr(self.args, "ou_sigma", 0.2)
+
+                noise_scale = getattr(self.args, "ou_noise_scale", 0.3) if t_env < self.args.env_args[
+                    "episode_limit"] * self.args.ou_stop_episode else 0.0
+                dx = theta * (mu - x) + sigma * x.clone().normal_()
+                self.ou_noise_state = x + dx
+                ou_noise = self.ou_noise_state * noise_scale
+                chosen_actions = chosen_actions + ou_noise
+
+            elif exploration_mode == "gaussian":
+                if t_env >= self.start_steps:
+                    # if explore_agent_ids is None:
+                    x = chosen_actions.clone().zero_()
+                    chosen_actions += self.act_noise * x.clone().normal_()
+                    # else:
+                    #     for idx in explore_agent_ids:
+                    #         x = chosen_actions[:, idx].clone().zero_()
+                    #         chosen_actions[:, idx] += act_noise * x.clone().normal_()
+                else:
+                    if getattr(self.args.env_args, "scenario_name", None) is None or self.args.env_args[
+                                "scenario_name"] in ["Humanoid-v2", "HumanoidStandup-v2"]:
+                        chosen_actions = th.from_numpy(np.array(
+                            [[self.args.action_spaces[0].sample() for i in range(self.n_agents)] for _ in
+                             range(batch_size)])).float()
+                    else:
+                        chosen_actions = th.from_numpy(np.array(
+                            [[self.args.action_spaces[i].sample() for i in range(self.n_agents)] for _ in
+                             range(batch_size)])).float()
+        #if t_env < self.start_steps:
+
+            if all([isinstance(act_space, spaces.Box) for act_space in self.args.action_spaces]):
+                for _aid in range(self.n_agents):
+                    for _actid in range(self.args.action_spaces[_aid].shape[0]):
+                        chosen_actions[:, _aid, _actid].clamp_((self.args.action_spaces[_aid].low[_actid]),
+                                                               (self.args.action_spaces[_aid].high[_actid]))
+            elif all([isinstance(act_space, spaces.Tuple) for act_space in
+                      self.args.action_spaces]):  # NOTE: This was added to handle scenarios like simple_reference since action space is Tuple
+                for _aid in range(self.n_agents):
+                    for _actid in range(self.args.action_spaces[_aid].spaces[0].shape[0]):
+                        chosen_actions[:, _aid, _actid].clamp_(self.args.action_spaces[_aid].spaces[0].low[_actid],
+                                                               self.args.action_spaces[_aid].spaces[0].high[_actid])
+                    for _actid in range(self.args.action_spaces[_aid].spaces[1].shape[0]):
+                        tmp_idx = _actid + self.args.action_spaces[_aid].spaces[0].shape[0]
+                        chosen_actions[:, _aid, tmp_idx].clamp_(self.args.action_spaces[_aid].spaces[1].low[_actid],
+                                                                self.args.action_spaces[_aid].spaces[1].high[_actid])
+
+        return chosen_actions
 
     def continuos_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
 
@@ -174,6 +220,7 @@ class ROLEMAC:
             hidden_states = self.hidden_states.view(batch_size, self.n_agents, -1)
             mu, sigma = self.roles[role_i](hidden_states)
             prior = self.roles[role_i].prior
+
             pi_action, log_p_action_taken, dkl_loss = self.action_selector.select_action(mu, sigma, prior=prior,
                                                                                          test_mode=test_mode,
                                                                                          t_env=t_env)
@@ -197,13 +244,16 @@ class ROLEMAC:
             log_p_action = log_p_action.gather(index=self.selected_roles.unsqueeze(-1).expand(-1, self.n_roles), dim=-1)
             log_p_action = log_p_action[:, 0]
             log_p_action = log_p_action.view(batch_size, self.n_agents)  # [bs,n_agents]
+
         actions = th.stack(actions, dim=-1)  # [bs*n_agents, dim_actions, n_roles]
         actions = actions.view(batch_size * self.n_agents, self.n_actions, -1)
 
         actions = actions.gather(
             index=self.selected_roles.unsqueeze(-1).unsqueeze(-1).expand(-1, self.n_actions, self.n_roles), dim=-1)
+
         actions = actions[..., 0]
         actions = actions.view(batch_size, self.n_agents, self.n_actions)
+
         return actions, log_p_action
 
     def discrete_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
@@ -421,6 +471,29 @@ class ROLEMAC:
 
     def action_repr_forward(self, ep_batch, t):
         return self.action_encoder.predict(ep_batch["obs"][:, t], ep_batch["actions_onehot"][:, t])
+
+    def _build_continous(self, args):
+        self.start_steps = getattr(args, "start_steps", 0)
+        self.act_noise = getattr(args, "act_noise", 0.1)
+
+        self.use_latent_normal = getattr(args, "use_latent_normal", False)
+        if self.use_latent_normal:
+            self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+        else:
+            self.role_latent = th.rand(self.n_roles, self.args.action_latent_dim).to(args.device)
+        self.mask_before_softmax = args.mask_before_softmax
+        self.forward = self.continuous_forward
+        self.select_actions = self.select_actions_continuous
+        self.kl_loss = None
+
+    def _build_discrete(self, args):
+        self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+        self.forward = self.discrete_forward
+        self.select_actions = self.select_actions_discrete
+        np.random.seed(0)
+        self.action_repr = th.from_numpy(np.random.rand(self.n_actions, self.args.action_latent_dim)).float().to(
+            args.device)
+        self.role_action_spaces = th.ones(self.n_roles, self.n_actions).to(args.device)
 
     def update_role_action_spaces(self):
         """

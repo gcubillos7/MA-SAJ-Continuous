@@ -135,7 +135,6 @@ class GaussianActionSelector():
         # else:
         #     sigma = th.diag_embed(sigma)
         dkl_loss = None
-
         if test_mode and self.test_greedy:
             picked_actions = mu
             log_p_pi = None
