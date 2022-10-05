@@ -15,7 +15,6 @@ class EpisodeRunner:
         self.env = env_REGISTRY[self.args.env](**self.args.env_args)
         self.episode_limit = self.env.episode_limit
         self.t = 0
-
         self.t_env = 0
 
         self.train_returns = []
@@ -67,6 +66,7 @@ class EpisodeRunner:
             actions = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, test_mode=test_mode)
 
             reward, terminated, env_info = self.env.step(actions[0])
+
             episode_return += reward
 
             post_transition_data = {

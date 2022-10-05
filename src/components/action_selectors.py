@@ -9,7 +9,6 @@ import numpy as np
 
 REGISTRY = {}
 
-
 class GumbelSoftmax():
     def __init__(self, args):
         self.args = args
@@ -61,8 +60,9 @@ class MultinomialActionSelector():
             self.epsilon = self.schedule.eval(t_env)
 
         if test_mode and self.test_greedy:
-            picked_actions = masked_policies.max(dim=2)[1]
+            picked_actions = masked_policies.max(dim=2)[1] 
         else:
+            # picked_actions = masked_policies.max(dim=2)[1] 
             picked_actions = Categorical(masked_policies).sample().long()
 
         return picked_actions
@@ -111,46 +111,58 @@ class GaussianActionSelector():
     def __init__(self, args):
         self.args = args
         self.test_greedy = getattr(args, "test_greedy", True)
-
-        # self.act_limit = 1.0
         self.decoder = None
         self.prior = None
         if not isinstance(self.prior, Normal) and (self.prior is not None):
             self.dkl = nn.KLDivLoss(reduction="batchmean", log_target=True)
         else:
             self.dkl = kl_divergence
-        self.with_logprob = getattr(args, "with_logprob", True)
         self.unit2actions = args.actions2unit_coef
-        self.actions_min = args.actions_min
+        self.squash = True
+        self.eps = 1e-4
+        self.action_scale = (self.args.actions_max.to(args.device) - self.args.actions_min.to(args.device))/2.
+        self.action_scale = self.action_scale/(self.action_scale+self.eps)
+        self.action_bias =  (self.args.actions_max.to(args.device) + self.args.actions_min.to(args.device))/2.
+        self.action_bias = self.action_bias * 0
 
+        self.max_sigma = 0.1 * th.atanh(self.action_scale - self.eps) * self.action_scale + self.eps
+        self.min_sigma = self.action_scale * self.eps
+        self.available_mask =  (self.action_scale/(self.action_scale + self.eps) ) == 0
+        
     def select_action(self, mu, sigma, t_env, prior, test_mode=False):
-        # expects the following input dimensionalities:
-        # mu: [b x a x u]
-        # sigma: [b x a x u]
 
-        # assert mu.dim() == 3, "incorrect input dim: mu"
-        # assert sigma.dim() == 3, "incorrect input dim: sigma"
-        # if self.args.n_actions==1:
-        #     sigma = sigma.view(-1, self.args.n_agents, self.args.n_actions, self.args.n_actions)
-        # else:
-        #     sigma = th.diag_embed(sigma)
         dkl_loss = None
+
         if test_mode and self.test_greedy:
             picked_actions = mu
             log_p_pi = None
+
+            if self.squash:
+                picked_actions = th.tanh(picked_actions)
+                picked_actions_out = self.action_scale * (picked_actions) + self.action_bias
+            else:
+                picked_actions_out = picked_actions
+
+            return picked_actions_out, log_p_pi, dkl_loss
         else:
-            # dst = th.distributions.MultivariateNormal(mu.view(-1, mu.shape[-1]), sigma.view(-1, mu.shape[-1],
-            # mu.shape[-1]))
-            dst = th.distributions.Normal(mu, sigma)
+            sigma = th.clamp(sigma, self.min_sigma , self.max_sigma)
+            normal = th.distributions.Normal(mu, sigma)
+            picked_actions = normal.rsample()  # view(*mu.shape)
+            # picked_actions = mu
+            if not self.squash:
+                log_p_pi = normal.log_prob(picked_actions)
+            else:
+                log_p_pi = normal.log_prob(picked_actions)
+                log_p_pi -= (2 * (np.log(2) - picked_actions - F.softplus(-2 * picked_actions)))
+                log_p_pi[self.available_mask.expand(log_p_pi.size(0), -1, -1)] = 0.0 # hack for log_p of padded actions
 
-            picked_actions = dst.rsample()  # view(*mu.shape)
-            log_p_pi = dst.log_prob(picked_actions).sum(axis=-1)
-            log_p_pi -= (2 * (np.log(2) - picked_actions - F.softplus(-2 * picked_actions))).sum(axis=-1)
-        picked_actions = th.tanh(picked_actions)
-        # picked_actions = self.unit2actions * picked_actions + self.actions_min
+            if self.squash:
+                picked_actions = th.tanh(picked_actions)
+                picked_actions_out = self.action_scale * (picked_actions) + self.action_bias
+            else:
+                picked_actions_out = picked_actions
 
-        picked_actions = ((self.unit2actions*0.5) * (picked_actions+1)) + self.actions_min
-        return picked_actions, log_p_pi, dkl_loss
+            return picked_actions_out, log_p_pi, dkl_loss
 
 
 REGISTRY["gaussian"] = GaussianActionSelector
@@ -180,14 +192,14 @@ class GaussianLatentActionSelector():
     def select_action(self, mu, sigma, t_env, prior, test_mode=False):
         dkl_loss = None
         latent_dist = Normal(mu, sigma)
-        latent_action = mu if test_mode else latent_dist.rsample()
+        latent_action = mu if test_mode else latent_dist.sample()
         log_p_latent = latent_dist.log_prob(latent_action).sum(dim=-1)
         if not test_mode and prior:
             if self.use_latent_normal:  # dkl distributions
                 # [bs, action_latent] [n_actions, action_latent]
                 dkl_loss = self.dkl(latent_dist, prior)
             else:
-                sample = prior.rsample()
+                sample = prior.sample()
                 log_p_prior = prior.log_prob(sample).sum(dim=-1)
                 dkl_loss = self.dkl(log_p_latent, log_p_prior)
             dkl_loss = th.max(dkl_loss, self.threshold)  # don't enforce the dkl inside the threshold

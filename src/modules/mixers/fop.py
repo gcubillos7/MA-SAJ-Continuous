@@ -36,17 +36,18 @@ class FOPMixer(nn.Module):
     def forward(self, agent_qs, states, actions, vs):
         bs = agent_qs.size(0)
         
-        v = self.V(states).reshape(-1, 1).repeat(1, self.n_agents) / self.n_agents
+        v = self.V(states).reshape(-1, 1) # global value estimator # .repeat(1, self.n_agents) / self.n_agents
 
-        agent_qs = agent_qs.reshape(-1, self.n_agents)
-        vs = vs.reshape(-1, self.n_agents)
+        agent_qs = agent_qs.reshape(-1, self.n_agents) # local q estimator
+        vs = vs.reshape(-1, self.n_agents) # local value estimator
 
-        adv_q = (agent_qs - vs).detach()
-        lambda_weight = self.lambda_weight(states, actions)-1
+        adv_q = (agent_qs - vs).detach() # local advantage
+        lambda_weight = self.lambda_weight(states, actions) - 1 # set of n_head weights estimations for each agent
 
-        adv_tot = th.sum(adv_q * lambda_weight, dim=1).reshape(bs, -1, 1)
-        v_tot = th.sum(agent_qs + v, dim=-1).reshape(bs, -1, 1)
+        adv_tot = th.sum(adv_q * lambda_weight, dim=1).reshape(bs, -1, 1)  # sum over agents
 
+        v_tot = v.reshape(bs, -1, 1) 
+            
         return adv_tot + v_tot 
 
     def lambda_weight(self, states, actions): 
@@ -68,7 +69,7 @@ class FOPMixer(nn.Module):
             lambda_weights.append(weights)
             
         lambdas = th.stack(lambda_weights, dim=1)
-        lambdas = lambdas.reshape(-1, self.n_head, self.n_agents).sum(dim=1)
-
+        lambdas = lambdas.reshape(-1, self.n_head, self.n_agents).sum(dim=1) # sum over n_heads
+        
         return lambdas.reshape(-1, self.n_agents)
         

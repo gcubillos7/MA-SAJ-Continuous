@@ -17,7 +17,7 @@ from utils.logging import Logger
 from utils.timehelper import time_left, time_str
 
 import pickle
-def run(_run, _config, _log):
+def run(_run, _config, _log, pymongo_client=None):
     # check args sanity
     _config = args_sanity_check(_config, _log)
 
@@ -49,6 +49,11 @@ def run(_run, _config, _log):
 
     # Clean up after finishing
     print("Exiting Main")
+
+    if pymongo_client is not None:
+        print("Attempting to close mongodb client")
+        pymongo_client.close()
+        print("Mongodb client closed")
 
     print("Stopping all threads")
     for t in threading.enumerate():
@@ -136,20 +141,19 @@ def run_sequential(args, logger):
                     mult_coef_tensor[_aid, tmp_idx] = (_action_max - _action_min).item()
                     action_min_tensor[_aid, tmp_idx] = (_action_min).item()
 
-        args.actions2unit_coef = mult_coef_tensor
-        args.actions2unit_coef_cpu = mult_coef_tensor.cpu()
-        args.actions2unit_coef_numpy = mult_coef_tensor.cpu().numpy()
+        args.actions2unit_coef = mult_coef_tensor.to(args.device)
+        args.actions2unit_coef_cpu = mult_coef_tensor.clone().cpu()
+        args.actions2unit_coef_numpy = mult_coef_tensor.clone().cpu().numpy()
 
-        args.actions_min = action_min_tensor
-        args.actions_min_cpu = action_min_tensor.cpu()
-        args.actions_min_numpy = action_min_tensor.cpu().numpy()
+        args.actions_min = action_min_tensor.to(args.device)
+        
+        args.actions_min_cpu = action_min_tensor.clone().cpu()
+        args.actions_min_numpy = action_min_tensor.clone().cpu().numpy()
 
-        args.actions_max = action_min_tensor + mult_coef_tensor
-        args.actions_max_cpu = args.actions_max.cpu()
-        args.actions_max_numpy = args.actions_max_cpu.cpu().numpy()
-        print(args.actions_min_numpy)
-        print(args.actions_max_numpy)
-        print(args.actions2unit_coef)
+        args.actions_max = action_min_tensor.to(args.device) + mult_coef_tensor.to(args.device)
+        args.actions_max_cpu = args.actions_max.clone().cpu()
+        args.actions_max_numpy = args.actions_max_cpu.clone().cpu().numpy()
+
 
         def actions_from_unit_box(actions):
             if isinstance(actions, np.ndarray):
@@ -177,18 +181,17 @@ def run_sequential(args, logger):
         elif all([isinstance(act_space, spaces.Tuple) for act_space in args.action_spaces]):
             actions_vshape = 1 if not args.actions_dtype == np.float32 else \
                 max([i.spaces[0].shape[0] + i.spaces[1].shape[0] for i in args.action_spaces])
-        dim_ac = args.n_actions
 
     # Default/Base scheme
 
     scheme = {
         "state": {"vshape": env_info["state_shape"]},
         "obs": {"vshape": env_info["obs_shape"], "group": "agents"},
-        "actions": {"vshape": (dim_ac,), "group": "agents", "dtype": action_dtype},
+        "actions": {"vshape": (actions_vshape,), "group": "agents", "dtype": action_dtype},
         "avail_actions": {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
         "reward": {"vshape": (1,)},
         "terminated": {"vshape": (1,), "dtype": th.uint8},
-        "roles": {"vshape": (1,), "group": "agents", "dtype": th.long}
+        "roles": {"vshape": (1,), "group": "agents", "dtype": th.uint8}
     }
 
     groups = {
@@ -205,7 +208,7 @@ def run_sequential(args, logger):
         "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
         }
 
-    buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1,
+    buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1 if args.runner_scope == "episodic" else 2,
                           args.burn_in_period,
                           preprocess=preprocess,
                           device="cpu" if args.buffer_cpu_only else args.device)
@@ -269,20 +272,30 @@ def run_sequential(args, logger):
     while runner.t_env <= args.t_max:
 
         # Run for a whole episode at a time
-        episode_batch = runner.run(test_mode=False)
-        buffer.insert_episode_batch(episode_batch)
+        if getattr(args, "runner_scope", "episodic") == "episodic":
+            episode_batch = runner.run(test_mode=False, learner=learner)
+            buffer.insert_episode_batch(episode_batch)
+            
+            if buffer.can_sample(args.batch_size) and (buffer.episodes_in_buffer > getattr(args, "burn_in_period", 0)):
+                episode_sample = buffer.sample(args.batch_size)
 
-        if buffer.can_sample(args.batch_size):
-            episode_sample = buffer.sample(args.batch_size)
+                # Truncate batch to only filled timesteps
+                max_ep_t = episode_sample.max_t_filled()
+                episode_sample = episode_sample[:, :max_ep_t]
 
-            # Truncate batch to only filled timesteps
-            max_ep_t = episode_sample.max_t_filled()
-            episode_sample = episode_sample[:, :max_ep_t]
+                if episode_sample.device != args.device:
+                    episode_sample.to(args.device)
 
-            if episode_sample.device != args.device:
-                episode_sample.to(args.device)
+                learner.train(episode_sample, runner.t_env, episode)
 
-            learner.train(episode_sample, runner.t_env, episode)
+        elif getattr(args, "runner_scope", "episode") == "transition":
+            assert getattr(args, "runner", "episode") == "parallel"
+            runner.run(test_mode=False,
+                       buffer=buffer,
+                       learner=learner,
+                       episode=episode)
+        else:
+            raise Exception("Undefined runner scope!")
 
         # Execute test runs once in a while
         n_test_runs = max(1, args.test_nepisode // runner.batch_size)
@@ -294,8 +307,17 @@ def run_sequential(args, logger):
             last_time = time.time()
 
             last_test_T = runner.t_env
-            for _ in range(n_test_runs):
-                runner.run(test_mode=True)
+            if getattr(args, "testing_on", True):
+                for _ in range(n_test_runs):
+                    if getattr(args, "runner_scope", "episodic") == "episodic":
+                        runner.run(test_mode=True, learner=learner)
+                    elif getattr(args, "runner_scope", "episode") == "transition":
+                        runner.run(test_mode=True,
+                                   buffer = buffer,
+                                   learner = learner,
+                                   episode = episode)
+                    else:
+                        raise Exception("Undefined runner scope!")
 
         if args.save_model and (runner.t_env - model_save_time >= args.save_model_interval or model_save_time == 0):
             model_save_time = runner.t_env

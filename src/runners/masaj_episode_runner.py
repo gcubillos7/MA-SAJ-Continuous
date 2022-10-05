@@ -88,13 +88,13 @@ class EpisodeRunner:
 
     def step_default(self, actions):
         ## Added
-        if type(actions)!=np.ndarray:
-            actions = actions.cpu()
+        # if type(actions)!=np.ndarray:
+        #     actions = actions.cpu()
         ##
         reward, terminated, env_info = self.env.step(actions)
         return reward, terminated, env_info
         
-    def run(self, test_mode=False):
+    def run(self, test_mode=False, **kwargs):
         self.reset()
 
         terminated = False

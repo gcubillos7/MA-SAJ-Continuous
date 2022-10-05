@@ -1,5 +1,5 @@
-FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
-
+#FROM nvidia/cuda:10.1-cudnn7-devel-ubuntu18.04
+FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu18.04
 RUN apt-get update -q \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl \
@@ -55,16 +55,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN mkdir /install
 WORKDIR /install
 RUN pip install setuptools
-
+RUN pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
 RUN pip install gym==0.10.8
 RUN pip install mujoco_py
-#RUN git clone https://github.com/oxwhirl/sacred.git /install/sacred && cd /install/sacred && python3 setup.py install
 RUN pip install git+https://github.com/IDSIA/sacred.git
 
 WORKDIR /mujoco_py
 RUN pip install git+https://github.com/schroederdewitt/multiagent_mujoco.git
 # Delay moving in the entire code until the very end.
 #ENTRYPOINT ["/mujoco_py/vendor/Xdummy-entrypoint"]
-# CMD ["pytest"]
+
 COPY . /mujoco_py
 COPY /assets /env/lib/python3.8/site-packages/multiagent_mujoco/assets

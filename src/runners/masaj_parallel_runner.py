@@ -16,6 +16,10 @@ class ParallelRunner:
         self.args = args
         self.logger = logger
         self.batch_size = self.args.batch_size_run
+        self.learn_interval = getattr(self.args, "learn_interval", 1)
+        self.burn_in_period = getattr(self.args, "burn_in_period", 0)
+
+        
 
         # Make subprocesses for the envs
         self.parent_conns, self.worker_conns = zip(*[Pipe() for _ in range(self.batch_size)])
@@ -62,6 +66,7 @@ class ParallelRunner:
         self.scheme = scheme
         self.groups = groups
         self.preprocess = preprocess
+        self.mac_is_recurrent = hasattr(self.mac, "role_hidden_states") or hasattr(self.mac, "hidden_states")
 
     def get_env_info(self):
         return self.env_info
@@ -95,7 +100,7 @@ class ParallelRunner:
         self.batch.update(pre_transition_data, ts=0)
         self.t = 0
         self.env_steps_this_run = 0
-
+        
     def run(self, test_mode=False, **kwargs):
         self.reset()
 
@@ -213,9 +218,9 @@ class ParallelRunner:
                 # buffer.insert_episode_batch(self.batch[:, self.t-1:self.t+1])
                 buffer.insert_episode_batch(self.batch[0, self.t - 1:self.t + 1])
 
-                if (self.t_env + self.t - self.last_learn_T) / self.args.learn_interval >= 1.0:
+                if (self.t_env + self.t - self.last_learn_T) / self.learn_interval >= 1.0:
                     # execute learning steps (if enabled)
-                    if buffer.can_sample(self.args.batch_size) and (buffer.episodes_in_buffer > getattr(self.args, "buffer_warmup", 0)):
+                    if buffer.can_sample(self.args.batch_size) and (buffer.episodes_in_buffer > self.burn_in_period):
                         episode_sample = buffer.sample(self.args.batch_size)
 
                         # Truncate batch to only filled timesteps
@@ -227,10 +232,39 @@ class ParallelRunner:
 
                         if getattr(self.args, 'verbose', False):
                             print("Learning now for {} steps...".format(getattr(self.args, "n_train", 1)))
+
+
+                        # clone hidden_states and selected roles
+                        role_hidden = getattr(self.mac, "role_hidden_states", None)
+                        hidden = getattr(self.mac,"hidden_states", None)   
+                        selected_roles = getattr(self.mac,"selected_roles", None)     
+                        
+                        # Save recurrent variables (add any time persistant variable here)
+                        if hidden is not None:
+                            hidden = hidden.clone()
+
+                        if role_hidden is not None:
+                            role_hidden = role_hidden.clone()
+
+                        if selected_roles is not None:
+                            selected_roles = selected_roles.clone()
+
+
+
                         for _ in range(getattr(self.args, "n_train", 1)):
                             learner.train(episode_sample, self.t_env, episode)
+                        
                         self.last_learn_T = self.t_env + self.t
+                        
+                        # Restore recurrent variables (add any time persistant variable here)
+                        if role_hidden is not None:
+                            self.mac.role_hidden_states = role_hidden
+                        
+                        if hidden is not None:
+                            self.mac.hidden_states = hidden
 
+                        if selected_roles is not None:
+                            self.mac.selected_roles = selected_roles
         if not test_mode:
             self.t_env += self.env_steps_this_run
 
@@ -249,7 +283,7 @@ class ParallelRunner:
         infos = [cur_stats] + final_env_infos
 
         cur_stats.update({k: sum(d.get(k, 0) for d in infos) for k in set.union(*[set(d) for d in infos])})
-
+        
         cur_stats["n_episodes"] = n_parallel_envs + cur_stats.get("n_episodes", 0)
         cur_stats["ep_length"] = sum(episode_lengths) + cur_stats.get("ep_length", 0)
         cur_stats["action_norms"] = np.mean(action_norms) + cur_stats.get("action_norms", 0)
@@ -265,8 +299,6 @@ class ParallelRunner:
             if hasattr(self.mac, "action_selector") and hasattr(self.mac.action_selector, "epsilon"):
                 self.logger.log_stat("epsilon", self.mac.action_selector.epsilon, self.t_env)
             self.log_train_stats_t = self.t_env
-
-        # self.mac.ou_noise_state = actions.clone().zero_()
 
         return self.batch
 

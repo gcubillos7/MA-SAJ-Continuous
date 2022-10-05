@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch as th
 
-LOG_STD_MAX = 2
+LOG_STD_MAX = 2.0
 LOG_STD_MIN = -20
 
 
@@ -13,26 +13,39 @@ class MASAJRole(nn.Module):
         self.args = args
         self.n_actions = args.n_actions
         self.use_latent_normal = getattr(args, 'use_latent_normal', False)
-
+        
         if self.use_latent_normal:
             output_dim = args.action_latent_dim
         else:
             output_dim = args.n_actions
 
         self.mu_layer = nn.Linear(args.rnn_hidden_dim, output_dim)
-        self.log_std_layer = nn.Linear(args.rnn_hidden_dim, output_dim)
+        self.use_std_layer = getattr(args, 'use_std_layer', True)
+
+        if self.use_std_layer:
+            self.log_std_layer = nn.Linear(args.rnn_hidden_dim, output_dim)
+        else:
+            init_std = 0.1
+            log_std = th.log(init_std* th.ones((args.n_agents, args.n_actions), device = args.device) )
+            self.log_std = nn.parameter.Parameter(data = log_std, requires_grad = True)
+
         self.prior = None
 
     def forward(self, hidden):
         latent_mu = self.mu_layer(hidden)
-        latent_log_std = self.log_std_layer(hidden)
-        latent_log_std = th.clamp(latent_log_std, LOG_STD_MIN, LOG_STD_MAX)
+
+        if self.use_std_layer:
+            latent_log_std = self.log_std_layer(hidden)
+        else:
+            latent_log_std = self.log_std
+        # latent_log_std = th.clamp(latent_log_std, LOG_STD_MIN, LOG_STD_MAX) # clamped elsewhere
         latent_std = th.exp(latent_log_std)
 
         return latent_mu, latent_std
 
     def update_prior(self, prior):
         self.prior = prior
+
 
 
 class MASAJRoleDiscrete(nn.Module):

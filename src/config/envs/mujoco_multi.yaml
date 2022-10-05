@@ -2,9 +2,10 @@ env: mujoco_multi
 
 env_args:
   episode_limit: 1000
-  scenario: "Humanoid-v2" #"Ant-v2"
-  scenario_name: "Antfgdf-v2"
-  agent_conf: "9|8" #"4x2"
+  scenario: "Humanoid-v2"
+  scenario_name: "Humanoid-v2"
+  agent_conf: "9|8"
   agent_obsk: 0
   obs_add_global_pos: False
+  
 t_max: 2000000

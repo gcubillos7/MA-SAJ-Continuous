@@ -1,5 +1,3 @@
-# from tkinter import N
-import pip
 from gym import spaces
 from modules.agents import REGISTRY as agent_REGISTRY
 from components.action_selectors import REGISTRY as action_REGISTRY
@@ -10,17 +8,13 @@ from torch.distributions.normal import Normal
 import torch as th
 import numpy as np
 from itertools import cycle
-
-# import numpy as np
 import copy
 import torch.nn.functional as F
-from sklearn.cluster import KMeans
-
 
 # This multi-agent controller shares parameters between agents
 class ROLEMAC:
     def __init__(self, scheme, groups, args):
-        self.flag = True
+
         self.args = args
         self.n_agents = args.n_agents
         self.n_actions = args.n_actions
@@ -47,17 +41,21 @@ class ROLEMAC:
         self.selected_roles = None
 
         # Role latent and actions representations
-
         if not self.continuous_actions:
             self._build_discrete(args)
         else:
             self._build_continous(args)
 
+        for _aid in range(self.n_agents):
+            for _actid in range(self.args.action_spaces[_aid].shape[0]):
+                print(_aid,_actid, (self.args.action_spaces[_aid].low[_actid]),
+                                                        (self.args.action_spaces[_aid].high[_actid])) 
+
     def select_actions_continuous(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
         with th.no_grad():
             (agent_outputs, _), (_, _) = self.forward(ep_batch, t=t_ep, test_mode=test_mode, t_env=t_env)
         selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)
-        return agent_outputs[bs].detach(), selected_roles[bs].detach()
+        return agent_outputs[bs], selected_roles[bs]
 
     def select_actions_discrete(self, ep_batch, t_ep, t_env, bs=slice(None), test_mode=False):
 
@@ -72,7 +70,7 @@ class ROLEMAC:
 
             selected_roles = self.selected_roles.view(ep_batch.batch_size, self.n_agents, -1)
 
-        return chosen_actions.detach(), selected_roles[bs].detach()
+        return chosen_actions, selected_roles[bs]
 
     def get_avail_actions_role(self, batch_size):
         # self.selected_roles [BS*n_agents]
@@ -95,10 +93,10 @@ class ROLEMAC:
         log_p_role = None
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
-            role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-            role_pis = self.softmax_roles(role_outputs, batch_size, test_mode=test_mode)
+            role_logits = self.role_selector(self.role_hidden_states, self.role_latent)
+            role_pis = self.softmax_roles(role_logits, batch_size, test_mode=test_mode)
             # Get Index of the role of each agent
-            selected_roles, log_p_role = self.role_selector.select_role(role_pis, test_mode=test_mode,
+            selected_roles, log_p_role = self.role_selector.select_role(role_logits, test_mode=test_mode,
                                                                         t_env=t_env)
 
             self.selected_roles = selected_roles
@@ -106,7 +104,7 @@ class ROLEMAC:
             self.role_avail_actions = self.get_avail_actions_role(batch_size)
 
             selected_roles = self.selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
-
+            
             if self.use_role_value:
                 log_p_role = log_p_role.view(batch_size, self.n_agents)
             else:
@@ -125,21 +123,23 @@ class ROLEMAC:
 
         agent_inputs = self._build_inputs(ep_batch, t)
         batch_size = ep_batch.batch_size
-
         self.role_hidden_states = self.role_agent(agent_inputs, self.role_hidden_states)
 
         selected_roles = None
         log_p_role = None
         # select a role every self.role_interval steps
         if t % self.role_interval == 0:
-            role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-            role_pis = self.softmax_roles(role_outputs, batch_size, test_mode=test_mode)
+            role_logits = self.role_selector(self.role_hidden_states, self.role_latent)
+            role_pis = self.softmax_roles(role_logits, batch_size, test_mode=test_mode)
             # Get Index of the role of each agent
-            selected_roles, log_p_role = self.role_selector.select_role(role_pis, test_mode=test_mode,
+            selected_roles, log_p_role = self.role_selector.select_role(role_logits, test_mode=test_mode,
                                                                         t_env=t_env)
-            self.selected_roles = selected_roles  # .squeeze(-1)
-            selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
 
+            selected_roles = th.arange(self.n_agents, device = ep_batch.device).unsqueeze(0).expand(batch_size, self.n_agents).reshape(-1)
+            self.selected_roles = selected_roles
+
+            selected_roles = selected_roles.unsqueeze(-1).view(batch_size, self.n_agents, -1)
+            
             if self.use_role_value:
                 log_p_role = log_p_role.view(batch_size, self.n_agents)
             else:
@@ -150,12 +150,13 @@ class ROLEMAC:
 
         (pi_action, log_p_action) = self.continuos_actions_forward(batch_size, avail_actions, t_env, test_mode)
 
-        if t_env is not None:
+        if (t_env is not None) and getattr(self.args, "exploration_mode", False):
             pi_action = self.add_exploration(pi_action, batch_size, t_env, test_mode)
 
         return (pi_action, log_p_action), (selected_roles, log_p_role)
 
     def add_exploration(self, chosen_actions, batch_size, t_env, test_mode):
+
         exploration_mode = getattr(self.args, "exploration_mode", "gaussian")
         # Ornstein-Uhlenbeck:
         if not test_mode:  # do exploration
@@ -174,13 +175,9 @@ class ROLEMAC:
 
             elif exploration_mode == "gaussian":
                 if t_env >= self.start_steps:
-                    # if explore_agent_ids is None:
-                    x = chosen_actions.clone().zero_()
-                    chosen_actions += self.act_noise * x.clone().normal_()
-                    # else:
-                    #     for idx in explore_agent_ids:
-                    #         x = chosen_actions[:, idx].clone().zero_()
-                    #         chosen_actions[:, idx] += act_noise * x.clone().normal_()
+                    pass
+                    # x = chosen_actions.detach().clone().zero_()
+                    # chosen_actions += self.act_noise * x.normal_()
                 else:
                     if getattr(self.args.env_args, "scenario_name", None) is None or self.args.env_args[
                                 "scenario_name"] in ["Humanoid-v2", "HumanoidStandup-v2"]:
@@ -190,26 +187,15 @@ class ROLEMAC:
                     else:
                         chosen_actions = th.from_numpy(np.array(
                             [[self.args.action_spaces[i].sample() for i in range(self.n_agents)] for _ in
-                             range(batch_size)])).float()
-        #if t_env < self.start_steps:
+                             range(batch_size)])).float() 
+                    chosen_actions = chosen_actions /0.4    
+                
+            # if all([isinstance(act_space, spaces.Box) for act_space in self.args.action_spaces]):
+            #     chosen_actions = chosen_actions.clamp(self.args.actions_min.to(chosen_actions.device), self.args.actions_max.to(chosen_actions.device))
+        
 
-            if all([isinstance(act_space, spaces.Box) for act_space in self.args.action_spaces]):
-                for _aid in range(self.n_agents):
-                    for _actid in range(self.args.action_spaces[_aid].shape[0]):
-                        chosen_actions[:, _aid, _actid].clamp_((self.args.action_spaces[_aid].low[_actid]),
-                                                               (self.args.action_spaces[_aid].high[_actid]))
-            elif all([isinstance(act_space, spaces.Tuple) for act_space in
-                      self.args.action_spaces]):  # NOTE: This was added to handle scenarios like simple_reference since action space is Tuple
-                for _aid in range(self.n_agents):
-                    for _actid in range(self.args.action_spaces[_aid].spaces[0].shape[0]):
-                        chosen_actions[:, _aid, _actid].clamp_(self.args.action_spaces[_aid].spaces[0].low[_actid],
-                                                               self.args.action_spaces[_aid].spaces[0].high[_actid])
-                    for _actid in range(self.args.action_spaces[_aid].spaces[1].shape[0]):
-                        tmp_idx = _actid + self.args.action_spaces[_aid].spaces[0].shape[0]
-                        chosen_actions[:, _aid, tmp_idx].clamp_(self.args.action_spaces[_aid].spaces[1].low[_actid],
-                                                                self.args.action_spaces[_aid].spaces[1].high[_actid])
 
-        return chosen_actions
+        return chosen_actions       
 
     def continuos_actions_forward(self, batch_size, avail_actions, t_env, test_mode):
 
@@ -322,6 +308,16 @@ class ROLEMAC:
 
         return agent_outs.view(batch_size, self.n_agents, -1)
 
+    def _build_role_latent(self, role_latent = None):
+
+        if role_latent is None:
+            self.role_latent = th.eye(self.n_roles, device=self.args.device)
+        elif getattr(self.args, 'add_role_id', False):
+            I = th.eye(self.n_roles, device=self.args.device)
+            self.role_latent = th.cat([role_latent, I], dim = -1)
+        else:
+            self.role_latent = role_latent
+
     def update_prior(self, role_i, mu, sigma):
         prior = Normal(mu, sigma)
         self.roles[role_i].update_prior(prior)
@@ -333,8 +329,9 @@ class ROLEMAC:
         return self.kl_loss
 
     def init_hidden(self, batch_size):
-        self.hidden_states = None
-        self.role_hidden_states = None
+        self.hidden_states = self.agent.init_hidden().unsqueeze(0).expand(batch_size, self.n_agents, -1)  # bav
+        self.role_hidden_states = self.role_agent.init_hidden().unsqueeze(0).expand(batch_size, self.n_agents, -1)  # bav
+
 
     def parameters(self):
         params = list(self.agent.parameters())
@@ -409,7 +406,7 @@ class ROLEMAC:
         # agent w/o roles policy 
         self.agent = agent_REGISTRY[self.args.agent](input_shape, self.args)
         # rol selector policy
-        self.role_agent = agent_REGISTRY[self.args.agent](input_shape, self.args)
+        self.role_agent = agent_REGISTRY[self.args.role_agent](input_shape, self.args)
 
     def _build_roles(self):
         self.roles = [role_REGISTRY[self.args.role](self.args) for _ in range(self.n_roles)]
@@ -435,6 +432,7 @@ class ROLEMAC:
             inputs.append(th.eye(self.n_agents, device=batch.device).unsqueeze(0).expand(bs, -1, -1))
 
         inputs = th.cat([x.reshape(bs * self.n_agents, -1) for x in inputs], dim=1)
+        
         return inputs
 
     def _get_input_shape_continous(self, scheme):  # Continuous
@@ -453,13 +451,13 @@ class ROLEMAC:
 
     def _get_input_shape_discrete(self, scheme):
         input_shape = scheme["obs"]["vshape"]
-        # print(input_shape)
+
         if self.args.obs_last_action:
             input_shape += scheme["actions_onehot"]["vshape"][0]
-        # print(input_shape)
+
         if self.args.obs_agent_id:
             input_shape += self.n_agents
-        # print(input_shape)
+
         return input_shape
 
     def update_roles(self):
@@ -477,17 +475,21 @@ class ROLEMAC:
         self.act_noise = getattr(args, "act_noise", 0.1)
 
         self.use_latent_normal = getattr(args, "use_latent_normal", False)
+
         if self.use_latent_normal:
-            self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+            role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
         else:
-            self.role_latent = th.rand(self.n_roles, self.args.action_latent_dim).to(args.device)
+            role_latent = None
+        self._build_role_latent(role_latent)
         self.mask_before_softmax = args.mask_before_softmax
         self.forward = self.continuous_forward
         self.select_actions = self.select_actions_continuous
         self.kl_loss = None
 
     def _build_discrete(self, args):
-        self.role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+        from sklearn.cluster import KMeans
+        role_latent = th.ones(self.n_roles, self.args.action_latent_dim).to(args.device)
+        self._build_role_latent(role_latent)
         self.forward = self.discrete_forward
         self.select_actions = self.select_actions_discrete
         np.random.seed(0)

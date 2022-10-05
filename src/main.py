@@ -11,8 +11,10 @@ import torch as th
 from utils.logging import get_logger
 import yaml
 from run import run
+
 # Debug
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
 # (default: ‘fd’ (linux/osx) or ‘sys’ (windows)) configure how stdout/stderr are captured. [‘no’, ‘sys’, ‘fd’]
 if sys.platform == "linux":
     SETTINGS['CAPTURE_MODE'] = "fd" 
@@ -21,7 +23,7 @@ else:
 
 logger = get_logger()
 
-ex = Experiment('mujoco')#"mujoco")
+ex = Experiment('mujoco')
 ex.logger = logger
 ex.captured_out_filter = apply_backspaces_and_linefeeds
 

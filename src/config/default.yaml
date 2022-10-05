@@ -2,7 +2,7 @@
 
 # --- pymarl options ---
 runner: "masaj" # Runs 1 env for an episode
-mac: "role_controller" # Basic controller
+mac: "basic_mac" # Basic controller
 env: mujoco_multi" # Environment name
 env_args: {} # Arguments for the environment
 batch_size_run: 1 # Number of environments to run in parallel
@@ -15,7 +15,7 @@ learner_log_interval: 2000 # Log training stats every {} timesteps
 t_max: 10000 # Stop running after this many timesteps
 use_cuda: True # Use gpu by default unless it isn't available
 buffer_cpu_only: True # If true we won't keep all of the replay buffer in vram
-
+runner_scope: 'episodic'
 # --- Logging options ---
 use_tensorboard: False # Log results to tensorboard
 save_model: False # Save the models to disk
@@ -45,5 +45,5 @@ obs_last_action: True # Include the agent's last action (one_hot) in the observa
 # --- Experiment running params ---
 repeat_id: 1
 label: "default_label"
-
+verbose: False
 continuous_actions: True
