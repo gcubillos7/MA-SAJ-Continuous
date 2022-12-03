@@ -56,5 +56,3 @@ def zip_strict(*iterables: Iterable) -> Iterable:
             raise ValueError("Iterables have different lengths")
         yield combo
 
-def mask_mse(error, mask):
-    return ((error/th.sqrt(mask.sum()))**2).sum()

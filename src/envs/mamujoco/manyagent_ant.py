@@ -4,7 +4,6 @@ from gym.envs.mujoco import mujoco_env
 from jinja2 import Template
 import os
 
-
 class ManyAgentAntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self, **kwargs):
         agent_conf = kwargs.get("agent_conf")
@@ -16,8 +15,13 @@ class ManyAgentAntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         asset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets',
                                                   'manyagent_ant_{}_agents_each_{}_segments.auto.xml'.format(n_agents,
                                                                                                                  n_segs_per_agents))
+        #if not os.path.exists(asset_path):
         print("Auto-Generating Manyagent Ant asset with {} segments at {}.".format(n_segs, asset_path))
         self._generate_asset(n_segs=n_segs, asset_path=asset_path)
+
+        #asset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets',git p
+        #                          'manyagent_swimmer.xml')
+
         mujoco_env.MujocoEnv.__init__(self, asset_path, 4)
         utils.EzPickle.__init__(self)
 
@@ -85,7 +89,8 @@ class ManyAgentAntEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         survive_reward = 1.0
         reward = forward_reward - ctrl_cost - contact_cost + survive_reward
         state = self.state_vector()
-        notdone = np.isfinite(state).all() and state[2] >= 0.2 and state[2] <= 1.0
+        notdone = np.isfinite(state).all() \
+            and state[2] >= 0.2 and state[2] <= 1.0
         done = not notdone
         ob = self._get_obs()
         return ob, reward, done, dict(

@@ -1,81 +1,94 @@
 # Static
 env: "mujoco_multi"
 name: "masaj"
-runner: "episode"
-runner_scope: "episodic"
+runner: "episode" # "parallel"
+runner_scope: "episodic" #  "transition"
+batch_size_run: 1
 mac: "role_mac"
 learner: "masaj_learner"
-agent: "rode"
+agent: "mlp"
+role: "msj"
+use_std_layer: True
+parametrization: "exp"
 role_agent: "rode"
 role_selector: "mlp_role"
-role: "msj"
-optimizer: "adam"
-batch_size_run: 1
+
 # Ambient dependent
 continuous_actions: True
 action_selector: "gaussian"
+squash: True
 use_latent_normal: False
 # Encoder-decoder for actions
 action_encoder: "obs_reward"
 
 # Epsilon scheduler and masking
-epsilon_start: 1.0 # Helps exploring at the start
-epsilon_finish: 0
-epsilon_anneal_time: 30000 
-epsilon_anneal_time_exp: 30000
+epsilon_start: 1.0
+epsilon_finish: 0.05
+epsilon_decay: "exp"
+epsilon_anneal_time: 2000000 
+epsilon_anneal_time_exp: 2000000
 mask_before_softmax: True
-# Learners hyperparameters
-batch_size: 32
-target_update_interval: 1
-lr: 0.001 #0.001s
-c_lr: 0.001 #0.0005
-v_lr: 0.001
-td_lambda: 1.0
-role_interval: 10
-role_action_spaces_update_start: 0 #50000
-use_role_value: False
-use_role_alpha: True
-double_value: False
 
-grad_norm_clip: 0.5
-weight_decay: 0.00001
+# Learners hyperparameters
+batch_size: 20 
+target_update_interval: 1
 polyak_update: True
 tau: 0.001
+td_lambda: 1.0
 
-reward_scale: 0.1
+optimizer: "adam"
+optim_eps: 0.0001 
+weight_decay: 0.0
+grad_norm_clip: 10.0
+lr: 0.001 #0.0005s
+c_lr: 0.001 #0.0005
+v_lr: 0.001
+
+role_interval: 20
+role_action_spaces_update_start: 0 #50000
+use_role_value: False
+use_role_alpha: False
+double_value: False
+
+reward_scale: 1.0
 flip_reward_scale: False # reward_scale = 1/alpha, can improve stability if reward and alpha are large
-alpha_start: 0.1
+alpha_start: 1.0 # 
 alpha_finish: 0.001
-alpha_anneal_time: 2000000
+alpha_anneal_time: 200000
 alpha_decay: "exp"
 # Network structure hyper-parameters
 rnn_hidden_dim: 400
 n_roles: 2
+obs_role: False # Pass roles as observations to critics
 n_role_clusters: 1
-state_latent_dim: 64
+state_latent_dim: 128
 action_latent_dim: 0
 mixing_embed_dim: 64
+hypernet_embed: 64
 n_head: 2
+layer_norm: False
 
 # Buffer hyper-parameters
-buffer_size: 2000
+buffer_size: 1500
 burn_in_period: 100
-
 # Logging parameters
-log_interval: 4000 # Log summary of stats after every {} timesteps
-runner_log_interval: 4000 # Log runner stats (not test stats) every {} timesteps
-learner_log_interval: 4000 # Log training stats every {} timesteps
-
+log_interval: 2000 # Log summary of stats after every {} timesteps
+runner_log_interval: 2000 # Log runner stats (not test stats) every {} timesteps
+learner_log_interval: 2000 # Log training stats every {} timesteps
+test_interval: 4000
 # Enviroments parameters
 env_args:
   state_last_action: False
 
 obs_agent_id: True # Include the agent's one_hot id in the observation
 obs_last_action: True  # Include the agent's last action (one_hot if applies) in the observation
-obs_role: False # Pass roles as observations to critics
 
-start_steps: 5000
+
+start_steps: 2000
+stop_steps: 0
 ou_sigma: 0.0
 act_noise: 0.0
 use_role_latent: False
 exploration_mode: "gaussian"
+# target_entropy: "auto"
+test_greedy: True

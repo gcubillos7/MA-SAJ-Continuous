@@ -3,7 +3,8 @@ import sys
 import os
 
 try:
-    from multiagent_mujoco.mujoco_multi import MujocoMulti
+    from .mamujoco import ManyAgentAntEnv, ManyAgentSwimmerEnv, MujocoMulti
+    # from multiagent_mujoco.mujoco_multi import MujocoMulti
     def env_fn(env, **kwargs):
         return env(**kwargs)
     REGISTRY = {
@@ -23,11 +24,10 @@ except:
             os.environ.setdefault("SC2PATH",
                                   os.path.join(os.getcwd(), "3rdparty", "StarCraftII"))
     except:
-        from .multiagentenv2 import MultiAgentEnv
+        from .multiagentenv import MultiAgentEnv
         # from .matrix_game.cts_matrix_game import Matrixgame as CtsMatrix
         # from .particle import Particle
         from .mamujoco import ManyAgentAntEnv, ManyAgentSwimmerEnv, MujocoMulti
-        print("Mujoco MA")
         def env_fn(env, **kwargs) -> MultiAgentEnv:
             # env_args = kwargs.get("env_args", {})
             return env(**kwargs)

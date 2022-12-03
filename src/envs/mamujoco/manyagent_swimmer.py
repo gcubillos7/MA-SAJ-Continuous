@@ -4,7 +4,6 @@ from gym.envs.mujoco import mujoco_env
 import os
 from jinja2 import Template
 
-
 class ManyAgentSwimmerEnv(mujoco_env.MujocoEnv, utils.EzPickle):
     def __init__(self, **kwargs):
         agent_conf = kwargs.get("agent_conf")
@@ -16,8 +15,13 @@ class ManyAgentSwimmerEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         asset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets',
                                                   'manyagent_swimmer_{}_agents_each_{}_segments.auto.xml'.format(n_agents,
                                                                                                                  n_segs_per_agents))
+        # if not os.path.exists(asset_path):
         print("Auto-Generating Manyagent Swimmer asset with {} segments at {}.".format(n_segs, asset_path))
         self._generate_asset(n_segs=n_segs, asset_path=asset_path)
+
+        #asset_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets',git p
+        #                          'manyagent_swimmer.xml')
+
         mujoco_env.MujocoEnv.__init__(self, asset_path, 4)
         utils.EzPickle.__init__(self)
 

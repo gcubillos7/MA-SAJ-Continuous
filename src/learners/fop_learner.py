@@ -47,9 +47,7 @@ class FOP_Learner:
     def train_actor(self, batch: EpisodeBatch, t_env: int, episode_num: int):
         bs = batch.batch_size
         max_t = batch.max_seq_length
-        terminated = batch["terminated"][:, :-1].float()
         mask = batch["filled"][:, :-1].float()
-        mask[:, 1:] = mask[:, 1:] * (1 - terminated[:, :-1])
         mask = mask.repeat(1, 1, self.n_agents).view(-1)
         avail_actions = batch["avail_actions"]
 

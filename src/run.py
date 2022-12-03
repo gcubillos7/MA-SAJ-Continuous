@@ -69,6 +69,7 @@ def run(_run, _config, _log, pymongo_client=None):
 
 
 def evaluate_sequential(args, runner):
+    
     all_roles = np.array([0 for _ in range(runner.mac.n_roles)])
 
     for episode_i in range(args.test_nepisode):
@@ -99,7 +100,7 @@ def evaluate_sequential(args, runner):
 def run_sequential(args, logger):
     # Init runner so we can get env info
     runner = r_REGISTRY[args.runner](args=args, logger=logger)
-
+    
     # Set up schemes and groups here
     env_info = runner.get_env_info()
     args.n_agents = env_info["n_agents"]
@@ -108,7 +109,7 @@ def run_sequential(args, logger):
     args.obs_shape = env_info["obs_shape"]
     args.actions_dtype = env_info.get("actions_dtype", np.int8) 
     action_dtype = th.long if not args.actions_dtype == np.float32 else th.float
-    dim_ac = 1
+    uses_role = (args.mac in ['rode_mac', 'role_mac'])
 
     if not ('particle' not in args.env and "cts_matrix_game" not in args.env and "mujoco_multi" not in args.env):
         env_info = runner.get_env_info()
@@ -154,7 +155,6 @@ def run_sequential(args, logger):
         args.actions_max_cpu = args.actions_max.clone().cpu()
         args.actions_max_numpy = args.actions_max_cpu.clone().cpu().numpy()
 
-
         def actions_from_unit_box(actions):
             if isinstance(actions, np.ndarray):
                 return args.actions2unit_coef_numpy * actions + args.actions_min_numpy
@@ -191,8 +191,10 @@ def run_sequential(args, logger):
         "avail_actions": {"vshape": (env_info["n_actions"],), "group": "agents", "dtype": th.int},
         "reward": {"vshape": (1,)},
         "terminated": {"vshape": (1,), "dtype": th.uint8},
-        "roles": {"vshape": (1,), "group": "agents", "dtype": th.uint8}
+       
     }
+    if uses_role:
+        scheme["roles"] = {"vshape": (1,), "group": "agents", "dtype": th.uint8}
 
     groups = {
         "agents": args.n_agents
@@ -201,15 +203,15 @@ def run_sequential(args, logger):
     if action_dtype == th.long:
         preprocess = {
             "actions": ("actions_onehot", [OneHot(out_dim=args.n_actions)]),
-            "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
         } 
     else:
-        preprocess = {
-        "roles": ("roles_onehot", [OneHot(out_dim=args.n_roles)])
-        }
+        preprocess = {}
 
-    buffer = ReplayBuffer(scheme, groups, args.buffer_size, env_info["episode_limit"] + 1 if args.runner_scope == "episodic" else 2,
-                          args.burn_in_period,
+    if uses_role:
+        preprocess["roles"] = ("roles_onehot", [OneHot(out_dim=args.n_roles)])
+
+    buffer = ReplayBuffer(scheme = scheme, groups =  groups, buffer_size = args.buffer_size, max_seq_length = env_info["episode_limit"] + 1 if args.runner_scope == "episodic" else 2,
+                          burn_in_period = args.burn_in_period,
                           preprocess=preprocess,
                           device="cpu" if args.buffer_cpu_only else args.device)
 

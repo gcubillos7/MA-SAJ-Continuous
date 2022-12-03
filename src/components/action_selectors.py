@@ -1,11 +1,16 @@
 import torch as th
 from torch.distributions.kl import kl_divergence
 from torch.distributions import Categorical
-from torch.distributions.normal import Normal
+from torch.distributions.normal import Normal 
+from torch.distributions.independent import Independent
+from torch.distributions import MultivariateNormal
+from torch.distributions.mixture_same_family import MixtureSameFamily
 from .epsilon_schedules import DecayThenFlatSchedule
 import torch.nn.functional as F
 import torch.nn as nn
 import numpy as np
+LOG_STD_MAX = 1.0
+LOG_STD_MIN = -10.0
 
 REGISTRY = {}
 
@@ -63,6 +68,7 @@ class MultinomialActionSelector():
             picked_actions = masked_policies.max(dim=2)[1] 
         else:
             # picked_actions = masked_policies.max(dim=2)[1] 
+            
             picked_actions = Categorical(masked_policies).sample().long()
 
         return picked_actions
@@ -118,52 +124,47 @@ class GaussianActionSelector():
         else:
             self.dkl = kl_divergence
         self.unit2actions = args.actions2unit_coef
-        self.squash = True
-        self.eps = 1e-4
+        self.squash = self.args.squash
+        self.eps = 1e-10
+        
         self.action_scale = (self.args.actions_max.to(args.device) - self.args.actions_min.to(args.device))/2.
         self.action_scale = self.action_scale/(self.action_scale+self.eps)
+
         self.action_bias =  (self.args.actions_max.to(args.device) + self.args.actions_min.to(args.device))/2.
         self.action_bias = self.action_bias * 0
+        self.unvailable_mask =  (self.action_scale/(self.action_scale + self.eps) ) == 0
+        self.max = 0
 
-        self.max_sigma = 0.1 * th.atanh(self.action_scale - self.eps) * self.action_scale + self.eps
-        self.min_sigma = self.action_scale * self.eps
-        self.available_mask =  (self.action_scale/(self.action_scale + self.eps) ) == 0
-        
     def select_action(self, mu, sigma, t_env, prior, test_mode=False):
-
+        
         dkl_loss = None
-
         if test_mode and self.test_greedy:
-            picked_actions = mu
+            picked_actions = mu 
             log_p_pi = None
-
-            if self.squash:
-                picked_actions = th.tanh(picked_actions)
-                picked_actions_out = self.action_scale * (picked_actions) + self.action_bias
-            else:
-                picked_actions_out = picked_actions
-
-            return picked_actions_out, log_p_pi, dkl_loss
+            if self.squash :
+                picked_actions = th.tanh(picked_actions) * self.action_scale + self.action_bias
         else:
-            sigma = th.clamp(sigma, self.min_sigma , self.max_sigma)
             normal = th.distributions.Normal(mu, sigma)
-            picked_actions = normal.rsample()  # view(*mu.shape)
-            # picked_actions = mu
-            if not self.squash:
-                log_p_pi = normal.log_prob(picked_actions)
-            else:
-                log_p_pi = normal.log_prob(picked_actions)
-                log_p_pi -= (2 * (np.log(2) - picked_actions - F.softplus(-2 * picked_actions)))
-                log_p_pi[self.available_mask.expand(log_p_pi.size(0), -1, -1)] = 0.0 # hack for log_p of padded actions
+            picked_actions = normal.rsample().view(mu.shape)
 
-            if self.squash:
-                picked_actions = th.tanh(picked_actions)
-                picked_actions_out = self.action_scale * (picked_actions) + self.action_bias
-            else:
-                picked_actions_out = picked_actions
+            log_p_pi = normal.log_prob(picked_actions)
+            if self.squash :
+                log_p_pi -= 2.0* (np.log(2.0) - picked_actions - F.softplus(-2.0*picked_actions)) # alternative
+                picked_actions = th.tanh(picked_actions) * self.action_scale + self.action_bias 
+                log_p_pi[self.unvailable_mask.expand(log_p_pi.size(0), -1, -1)] = 0.0 # log_p of padded actions
+            log_p_pi = log_p_pi.sum(dim = -1) # sum over action dim
+        # M = sigma
+        # M= M.max()
+        # if t_env is not None:
+        #     if (t_env % 100) == 0:
+        #         if (M >= self.max):
+        #             self.max = M
+        #             print("sigma", sigma)
+        #             print("mu", mu)
+        #             # print(M, th.argwhere(sigma == M))
+        #             # print("sigma.mean()", sigma.mean())
 
-            return picked_actions_out, log_p_pi, dkl_loss
-
+        return picked_actions, log_p_pi, dkl_loss
 
 REGISTRY["gaussian"] = GaussianActionSelector
 
@@ -220,3 +221,4 @@ class GaussianLatentActionSelector():
 
 
 REGISTRY["gaussian_latent"] = GaussianLatentActionSelector
+

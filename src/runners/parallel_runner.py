@@ -14,6 +14,7 @@ class ParallelRunner:
         self.args = args
         self.logger = logger
         self.batch_size = self.args.batch_size_run
+
         
         # Make subprocesses for the envs
         self.parent_conns, self.worker_conns = zip(*[Pipe() for _ in range(self.batch_size)])

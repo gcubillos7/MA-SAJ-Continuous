@@ -19,11 +19,14 @@ class ParallelRunner:
         self.learn_interval = getattr(self.args, "learn_interval", 1)
         self.burn_in_period = getattr(self.args, "burn_in_period", 0)
 
-        
+
+        self.uses_role = (args.mac in ['rode_mac', 'role_mac'])
 
         # Make subprocesses for the envs
         self.parent_conns, self.worker_conns = zip(*[Pipe() for _ in range(self.batch_size)])
         env_fn = env_REGISTRY[self.args.env]
+        
+
         if self.args.env == "sc2":
             self.ps = [Process(target=env_worker,
                                args=(worker_conn, CloudpickleWrapper(partial(env_fn, **self.args.env_args))))
@@ -127,10 +130,12 @@ class ParallelRunner:
             # Pass the entire batch of experiences up till now to the agents
             # Receive the actions for each agent at this timestep in a batch for each un-terminated env
             learner = kwargs.get("learner")
-            policy_out = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, bs=envs_not_terminated,
+            actions = self.mac.select_actions(self.batch, t_ep=self.t, t_env=self.t_env, bs=envs_not_terminated,
                                               test_mode=test_mode)  
-            actions = policy_out[0]  
-            roles = policy_out[1]    
+            if self.uses_role:
+                roles = actions[1]
+                actions = actions[0]  
+                    
 
             cpu_actions = actions.to("cpu").numpy()
             action_norms.append(np.sqrt(np.sum(cpu_actions**2)))
@@ -138,9 +143,11 @@ class ParallelRunner:
             
             # Update the actions taken
             actions_chosen = {
-                "actions": actions.unsqueeze(1),
-                "roles": roles.unsqueeze(1),
+                "actions": actions.unsqueeze(1)
             }
+
+            if self.uses_role:
+                actions_chosen["roles"] = roles.unsqueeze(1)
 
             self.batch.update(actions_chosen, bs=envs_not_terminated, ts=self.t, mark_filled=False)
             # Send actions to each env
@@ -235,19 +242,21 @@ class ParallelRunner:
 
 
                         # clone hidden_states and selected roles
-                        role_hidden = getattr(self.mac, "role_hidden_states", None)
+                        if self.uses_role:
+                            role_hidden = getattr(self.mac, "role_hidden_states", None)
+                            selected_roles = getattr(self.mac,"selected_roles", None)  
                         hidden = getattr(self.mac,"hidden_states", None)   
-                        selected_roles = getattr(self.mac,"selected_roles", None)     
                         
                         # Save recurrent variables (add any time persistant variable here)
                         if hidden is not None:
                             hidden = hidden.clone()
 
-                        if role_hidden is not None:
-                            role_hidden = role_hidden.clone()
+                        if self.uses_role:
+                            if role_hidden is not None:
+                                role_hidden = role_hidden.clone()
 
-                        if selected_roles is not None:
-                            selected_roles = selected_roles.clone()
+                            if selected_roles is not None:
+                                selected_roles = selected_roles.clone()
 
 
 
@@ -257,14 +266,15 @@ class ParallelRunner:
                         self.last_learn_T = self.t_env + self.t
                         
                         # Restore recurrent variables (add any time persistant variable here)
-                        if role_hidden is not None:
-                            self.mac.role_hidden_states = role_hidden
-                        
+                        if self.uses_role:
+                            if role_hidden is not None:
+                                self.mac.role_hidden_states = role_hidden
+                            if selected_roles is not None:
+                                self.mac.selected_roles = selected_roles                        
                         if hidden is not None:
                             self.mac.hidden_states = hidden
 
-                        if selected_roles is not None:
-                            self.mac.selected_roles = selected_roles
+
         if not test_mode:
             self.t_env += self.env_steps_this_run
 
@@ -286,8 +296,10 @@ class ParallelRunner:
         
         cur_stats["n_episodes"] = n_parallel_envs + cur_stats.get("n_episodes", 0)
         cur_stats["ep_length"] = sum(episode_lengths) + cur_stats.get("ep_length", 0)
+        cur_stats["max_t"] = max(self.t_env, cur_stats.get("max_t", 0))
         cur_stats["action_norms"] = np.mean(action_norms) + cur_stats.get("action_norms", 0)
         cur_stats["action_means"] = np.mean(action_means) + cur_stats.get("action_means", 0)
+        
 
         cur_returns.extend(episode_returns)
 
@@ -308,6 +320,8 @@ class ParallelRunner:
         returns.clear()
 
         for k, v in stats.items():
+            if  k == "ep_length":
+                self.logger.log_stat(prefix + k + "_max", max(v), self.t_env)
             if k != "n_episodes":
                 self.logger.log_stat(prefix + k + "_mean" , v/stats["n_episodes"], self.t_env)
         stats.clear()

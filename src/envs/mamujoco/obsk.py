@@ -2,7 +2,6 @@ import itertools
 import numpy as np
 from copy import deepcopy
 
-
 class Node():
     def __init__(self, label, qpos_ids, qvel_ids, act_ids, body_fn=None, bodies=None, extra_obs=None, tendons=None):
         self.label = label
@@ -338,6 +337,8 @@ def get_parts_and_edges(label, partitioning):
         if partitioning == "2x1":
             # isolate upper and lower arms
             parts = [(joint0,), (joint1,)]
+            # TODO: There could be tons of decompositions here
+
         else:
             raise Exception("UNKNOWN partitioning config: {}".format(partitioning))
 
@@ -346,7 +347,7 @@ def get_parts_and_edges(label, partitioning):
     elif label in ["Swimmer-v2"]:
 
         # define Mujoco-Graph
-        joint0 = Node("rot2", -2, -2, 0)
+        joint0 = Node("rot2", -2, -2, 0) # TODO: double-check ids
         joint1 = Node("rot3", -1, -1, 1)
 
         edges = [HyperEdge(joint0, joint1)]
@@ -355,6 +356,8 @@ def get_parts_and_edges(label, partitioning):
         if partitioning == "2x1":
             # isolate upper and lower body
             parts = [(joint0,), (joint1,)]
+            # TODO: There could be tons of decompositions here
+
         else:
             raise Exception("UNKNOWN partitioning config: {}".format(partitioning))
 
@@ -382,12 +385,15 @@ def get_parts_and_edges(label, partitioning):
             # isolate upper and lower body
             parts = [(foot_joint, leg_joint, thigh_joint),
                      (foot_left_joint, leg_left_joint, thigh_left_joint,)]
+            # TODO: There could be tons of decompositions here
+
         else:
             raise Exception("UNKNOWN partitioning config: {}".format(partitioning))
 
         return parts, edges, globals
 
     elif label in ["coupled_half_cheetah"]:
+
         # define Mujoco graph
         tendon = 0
 
@@ -412,6 +418,7 @@ def get_parts_and_edges(label, partitioning):
         fthigh2 = Node("fthigh2", -3, -3, 3)
         fshin2 = Node("fshin2", -2, -2, 4)
         ffoot2 = Node("ffoot2", -1, -1, 5)
+
 
         edges = [HyperEdge(bfoot, bshin),
                  HyperEdge(bshin, bthigh),
@@ -442,6 +449,7 @@ def get_parts_and_edges(label, partitioning):
         return parts, edges, globals
 
     elif label in ["manyagent_swimmer"]:
+
         # Generate asset file
         try:
             n_agents = int(partitioning.split("x")[0])
@@ -449,6 +457,8 @@ def get_parts_and_edges(label, partitioning):
             n_segs = n_agents * n_segs_per_agents
         except Exception as e:
             raise Exception("UNKNOWN partitioning config: {}".format(partitioning))
+
+        # Note: Default Swimmer corresponds to n_segs = 3
 
         # define Mujoco-Graph
         joints = [Node("rot{:d}".format(i), -n_segs + i, -n_segs + i, i) for i in range(0, n_segs)]
@@ -458,7 +468,8 @@ def get_parts_and_edges(label, partitioning):
         parts = [tuple(joints[i * n_segs_per_agents:(i + 1) * n_segs_per_agents]) for i in range(n_agents)]
         return parts, edges, globals
 
-    elif label in ["manyagent_ant"]:
+    elif label in ["manyagent_ant"]: # TODO: FIX!
+
         # Generate asset file
         try:
             n_agents = int(partitioning.split("x")[0])
@@ -466,6 +477,27 @@ def get_parts_and_edges(label, partitioning):
             n_segs = n_agents * n_segs_per_agents
         except Exception as e:
             raise Exception("UNKNOWN partitioning config: {}".format(partitioning))
+
+
+        # # define Mujoco graph
+        # torso = 1
+        # front_left_leg = 2
+        # aux_1 = 3
+        # ankle_1 = 4
+        # right_back_leg = 11
+        # aux_4 = 12
+        # ankle_4 = 13
+        #
+        # off = -4*(n_segs-1)
+        # hip1 = Node("hip1", -4-off, -4-off, 2, bodies=[torso, front_left_leg], body_fn=lambda _id, x:np.clip(x, -1, 1).tolist()) #
+        # ankle1 = Node("ankle1", -3-off, -3-off, 3, bodies=[front_left_leg, aux_1, ankle_1], body_fn=lambda _id, x:np.clip(x, -1, 1).tolist())#,
+        # hip4 = Node("hip4", -2-off, -2-off, 0, bodies=[torso, right_back_leg], body_fn=lambda _id, x:np.clip(x, -1, 1).tolist())#,
+        # ankle4 = Node("ankle4", -1-off, -1-off, 1, bodies=[right_back_leg, aux_4, ankle_4], body_fn=lambda _id, x:np.clip(x, -1, 1).tolist())#,
+        #
+        # edges = [HyperEdge(ankle4, hip4),
+        #          HyperEdge(ankle1, hip1),
+        #          HyperEdge(hip4, hip1),
+        #          ]
 
         edges = []
         joints = []

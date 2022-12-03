@@ -38,7 +38,7 @@ class QMixer(nn.Module):
                                nn.ReLU(),
                                nn.Linear(self.embed_dim, 1))
 
-    def forward(self, agent_qs, states):
+    def forward(self, agent_qs, states, actions=None, vs=None):
         bs = agent_qs.size(0)
         states = states.reshape(-1, self.state_dim)
         agent_qs = agent_qs.view(-1, 1, self.n_agents)

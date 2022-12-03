@@ -1,11 +1,11 @@
 from functools import partial
 import gym
 from gym.spaces import Box
-import numpy as np
 from gym.wrappers import TimeLimit
-from envs.multiagentenv2 import MultiAgentEnv
-from envs.mamujoco import obsk
+import numpy as np
 
+from .multiagentenv import MultiAgentEnv
+from .obsk import get_joints_at_kdist, get_parts_and_edges, build_obs
 
 # using code from https://github.com/ikostrikov/pytorch-ddpg-naf
 class NormalizedActions(gym.ActionWrapper):
@@ -30,10 +30,10 @@ class MujocoMulti(MultiAgentEnv):
 
     def __init__(self, batch_size=None, **kwargs):
         super().__init__(batch_size, **kwargs)
-        self.scenario = kwargs["env_args"]["scenario_name"] # e.g. Ant-v2
-        self.agent_conf = kwargs["env_args"]["agent_conf"] # e.g. '2x3'
+        self.scenario = kwargs["env_args"]["scenario"]  # e.g. Ant-v2
+        self.agent_conf = kwargs["env_args"]["agent_conf"]  # e.g. '2x3'
 
-        self.agent_partitions, self.mujoco_edges, self.mujoco_globals  = obsk.get_parts_and_edges(self.scenario,
+        self.agent_partitions, self.mujoco_edges, self.mujoco_globals = get_parts_and_edges(self.scenario,
                                                                                              self.agent_conf)
 
         self.n_agents = len(self.agent_partitions)
@@ -52,8 +52,8 @@ class MujocoMulti(MultiAgentEnv):
                     self.k_categories_label = "qpos,qvel,cfrc_ext,cvel,cinert,qfrc_actuator|qpos"
                 elif self.scenario in ["Reacher-v2"]:
                     self.k_categories_label = "qpos,qvel,fingertip_dist|qpos"
-                if self.scenario in ["coupled_half_cheetah"]:
-                    self.k_categories_label = "qpos,qvel,ten_J,ten_length,ten_velocity|qpos"
+                elif self.scenario in ["coupled_half_cheetah"]:
+                    self.k_categories_label = "qpos,qvel,ten_J,ten_length,ten_velocity|"
                 else:
                     self.k_categories_label = "qpos,qvel|qpos"
 
@@ -63,8 +63,9 @@ class MujocoMulti(MultiAgentEnv):
             self.global_categories_label = kwargs["env_args"].get("global_categories")
             self.global_categories = self.global_categories_label.split(",") if self.global_categories_label is not None else []
 
+
         if self.agent_obsk is not None:
-            self.k_dicts = [obsk.get_joints_at_kdist(agent_id,
+            self.k_dicts = [get_joints_at_kdist(agent_id,
                                                 self.agent_partitions,
                                                 self.mujoco_edges,
                                                 k=self.agent_obsk,
@@ -77,9 +78,16 @@ class MujocoMulti(MultiAgentEnv):
         if self.env_version == 2:
             try:
                 self.wrapped_env = NormalizedActions(gym.make(self.scenario))
-            except gym.error.Error:
-                from envs import REGISTRY as env_REGISTRY
-                self.wrapped_env = NormalizedActions(TimeLimit(partial(env_REGISTRY[self.scenario],**kwargs["env_args"])(), max_episode_steps=self.episode_limit))
+            except gym.error.Error:  # env not in gym
+                if self.scenario in ["manyagent_ant"]:
+                    from .manyagent_ant import ManyAgentAntEnv as this_env
+                elif self.scenario in ["manyagent_swimmer"]:
+                    from .manyagent_swimmer import ManyAgentSwimmerEnv as this_env
+                elif self.scenario in ["coupled_half_cheetah"]:
+                    from .coupled_half_cheetah import CoupledHalfCheetah as this_env
+                else:
+                    raise NotImplementedError('Custom env not implemented!')
+                self.wrapped_env = NormalizedActions(TimeLimit(this_env(**kwargs["env_args"]), max_episode_steps=self.episode_limit))
         else:
             assert False,  "not implemented!"
         self.timelimit_env = self.wrapped_env.env
@@ -98,8 +106,19 @@ class MujocoMulti(MultiAgentEnv):
         pass
 
     def step(self, actions):
-        flat_actions = np.concatenate([actions[i][:self.action_space[i].low.shape[0]] for i in range(self.n_agents)])
-        obs_n, reward_n, done_n, info_n = self.wrapped_env.step(flat_actions)
+
+        # we need to map actions back into MuJoCo action space
+        env_actions = np.zeros((sum([self.action_space[i].low.shape[0] for i in range(self.n_agents)]),)) + np.nan
+        for a, partition in enumerate(self.agent_partitions):
+            for i, body_part in enumerate(partition):
+                if env_actions[body_part.act_ids] == env_actions[body_part.act_ids]:
+                    raise Exception("FATAL: At least one env action is doubly defined!")
+                env_actions[body_part.act_ids] = actions[a][i]
+
+        if np.isnan(env_actions).any():
+            raise Exception("FATAL: At least one env action is undefined!")
+
+        obs_n, reward_n, done_n, info_n = self.wrapped_env.step(env_actions)
         self.steps += 1
 
         info = {}
@@ -124,7 +143,7 @@ class MujocoMulti(MultiAgentEnv):
         if self.agent_obsk is None:
             return self.env._get_obs()
         else:
-            return obsk.build_obs(self.env,
+            return build_obs(self.env,
                                   self.k_dicts[agent_id],
                                   self.k_categories,
                                   self.mujoco_globals,
@@ -138,7 +157,9 @@ class MujocoMulti(MultiAgentEnv):
         else:
             return max([len(self.get_obs_agent(agent_id)) for agent_id in range(self.n_agents)])
 
+
     def get_state(self, team=None):
+        # TODO: May want global states for different teams (so cannot see what the other team is communicating e.g.)
         return self.env._get_obs()
 
     def get_state_size(self):
@@ -160,6 +181,7 @@ class MujocoMulti(MultiAgentEnv):
     def get_stats(self):
         return {}
 
+    # TODO: Temp hack
     def get_agg_stats(self, stats):
         return {}
 

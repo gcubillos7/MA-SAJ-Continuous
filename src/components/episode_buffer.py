@@ -87,7 +87,8 @@ class EpisodeBatch:
             self.data.episode_data[k] = v.to(device)
         self.device = device
         return self
-
+    
+    # add data to bs ts in batch
     def update(self, data, bs=slice(None), ts=slice(None), mark_filled=True):
         slices = self._parse_slices((bs, ts))
         for k, v in data.items():
@@ -105,13 +106,15 @@ class EpisodeBatch:
                 raise KeyError("{} not found in transition or episode data".format(k))
 
             dtype = self.scheme[k].get("dtype", th.float32)
-            
+            # if isinstance(v, list):
+            #     v = np.array(v)
             v = th.tensor(v, dtype=dtype, device=self.device)
+                
             try:
                 self._check_safe_view(v, target[k][_slices])
             except Exception as e:
-                a = 5
                 pass
+
             target[k][_slices] = v.view_as(target[k][_slices])
 
             if k in self.preprocess:
@@ -264,212 +267,6 @@ class EpisodeBatch:
                 episode_pds.append(pd)
         return transition_pds, episode_pds
 
-# import blosc
-class CompressibleBatchTensor():
-
-    def __init__(self, batch_size, shape, dtype, device, out_device, chunk_size=10, algo="zstd"):
-        assert batch_size % chunk_size==0, "batch_size must be multiple of chunk size!"
-        self._storage = {_i:None for _i in range(batch_size // chunk_size)}
-        self.chunk_size = chunk_size
-        self.algo = algo
-        self.batch_size = batch_size
-        self.device = device
-        self.dtype = dtype
-        self.np_dtype = th.Tensor(1).type(self.dtype).numpy().dtype
-        self.shape = shape
-        self.out_device = out_device
-        pass
-
-    def __getitem__(self, item):
-        batch_idx = item[0]
-        other_idx = item[1:]
-
-        if isinstance(batch_idx, slice):
-            batch_idxs = list(range(0 if batch_idx.start is None else batch_idx.start,
-                                    self.batch_size if batch_idx.stop is None else batch_idx.stop,
-                                    1 if batch_idx.step is None else batch_idx.step))
-        elif isinstance(batch_idx, list):
-            batch_idxs = batch_idx
-
-        else:
-            batch_idxs = [batch_idx]
-
-        # cluster batch_idxs by chunk
-        chunk_dict = {}
-        for _a, idx in enumerate(batch_idxs):
-            chunk_id = idx // self.chunk_size
-            if not (chunk_id in chunk_dict):
-                chunk_dict[chunk_id] = []
-            id_in_chunk = idx % self.chunk_size
-            chunk_dict[chunk_id].append((id_in_chunk, _a))
-
-        tmp_list = []
-        for chunk_id in chunk_dict.keys():
-            if self._storage[chunk_id] is None:
-                for _, _a in chunk_dict[chunk_id]:
-                    tmp_list.append((th.zeros(self.shape,
-                                             dtype=self.dtype,
-                                             device=self.out_device), _a))
-            else:
-                # decompress and read out
-                tmp = self._decompress(self._storage[chunk_id], shape=(self.chunk_size, *self.shape))
-                for in_chunk_idx, _a in chunk_dict[chunk_id]:
-                    tmp_list.append((tmp.__getitem__((in_chunk_idx, *other_idx)), _a))
-
-        # re-order elements
-        tmp_list.sort(key=lambda x: x[1])
-        rtn_item = th.stack([a[0] for a in tmp_list], 0)
-        return rtn_item.to(device=self.out_device)
-
-
-    def _decompress(self, compressed_tensor, shape):
-        decompressed_string = blosc.decompress(compressed_tensor, self.np_dtype)
-        np_arr = np.fromstring(bytes(decompressed_string), dtype=self.np_dtype).reshape(shape)
-        th_tensor = th.from_numpy(np_arr)
-        return th_tensor
-
-    def _compress(self, tensor):
-        np_tensor = tensor.cpu().numpy()
-        compressed_tensor = blosc.compress(np_tensor.tostring(), typesize=np_tensor.itemsize, cname=self.algo)
-        return compressed_tensor
-
-    def __setitem__(self, item, val):
-        batch_idx = item[0]
-        other_idx = item[1:]
-        if isinstance(batch_idx, slice):
-            batch_idxs = list(range(0 if batch_idx.start is None else batch_idx.start,
-                                    self.batch_size if batch_idx.stop is None else batch_idx.stop,
-                                    1 if batch_idx.step is None else batch_idx.step))
-        else:
-            batch_idxs = [batch_idx]
-
-        assert list(sorted(batch_idxs)) == batch_idxs, "batch_idxs have to be in order!"
-
-        # cluster batch_idxs by chunk
-        chunk_dict = {}
-        for _a, idx in enumerate(batch_idxs):
-            chunk_id = idx // self.chunk_size
-            if not (chunk_id in chunk_dict):
-                chunk_dict[chunk_id] = {}
-            id_in_chunk = idx % self.chunk_size
-            chunk_dict[chunk_id][id_in_chunk] = _a
-
-        for chunk_id in chunk_dict.keys():
-            if self._storage[chunk_id] is None:
-                tmp_tensor = th.zeros((self.chunk_size, *self.shape),
-                                dtype=self.dtype,
-                                device=self.out_device)
-            else:
-
-                # decompress and read out
-                tmp_tensor = self._decompress(self._storage[chunk_id], shape=(self.chunk_size, *self.shape))
-            for in_chunk_id, val_idx in chunk_dict[chunk_id].items():
-                tmp_tensor.__setitem__([in_chunk_id, *other_idx], val[val_idx])
-            # store tmp_tensor back
-            self._storage[chunk_id] = self._compress(tmp_tensor)
-        pass
-
-    def get_compression_stats(self):
-        stats = {}
-
-        # calculate how many entries are actually filled in the buffer
-        nonempty_chunks = [i for i, (_, _x) in enumerate(self._storage.items()) if _x is not None]
-        stats["fill_level"] = float(len(nonempty_chunks)) / float(len(self._storage.keys()))
-
-        # calculate compression ratio
-        from itertools import product
-        chunk_compression_ratios = [len(_x) / ((np.prod(np.array(self.shape))).item() * self.chunk_size * self.np_dtype.itemsize) for
-                                    k, _x in self._storage.items() if _x is not None]
-        stats["compression_ratio"] = (np.array(chunk_compression_ratios).mean()).item()
-
-        stats["predicted_full_size_compressed"] = stats["compression_ratio"] * self.chunk_size * len(self._storage.keys()) * (np.prod(np.array(self.shape))*self.np_dtype.itemsize).item()
-        stats["predicted_full_size_uncompressed"] = self.chunk_size * len(self._storage.keys()) * (np.prod(np.array(self.shape))*self.np_dtype.itemsize).item()
-        return stats
-
-    pass
-
-class CompressibleEpisodeBatch(EpisodeBatch):
-
-    def __init__(self, scheme, groups, batch_size,
-                  max_seq_length, data, preprocess,
-                  device,
-                  out_device,
-                 chunk_size=10,
-                 algo="zstd"):
-        self.out_device = out_device
-        self.chunk_size = chunk_size
-        self.algo = algo
-        EpisodeBatch.__init__(self,
-                              scheme=scheme,
-                              groups=groups,
-                              batch_size=batch_size,
-                              max_seq_length=max_seq_length,
-                              data=None,
-                              preprocess=preprocess,
-                              device=device)
-        pass
-
-    def _setup_data(self, scheme, groups, batch_size, max_seq_length, preprocess):
-        super()._setup_data(scheme, groups, batch_size=1, max_seq_length=1, preprocess=preprocess)
-
-        # assert "filled" not in scheme, '"filled" is a reserved key for masking.'
-        scheme.update({
-            "filled": {"vshape": (1,), "dtype": th.long},
-        })
-
-        for field_key, field_info in scheme.items():
-            assert "vshape" in field_info, "Scheme must define vshape for {}".format(field_key)
-            vshape = field_info["vshape"]
-            episode_const = field_info.get("episode_const", False)
-            group = field_info.get("group", None)
-            dtype = field_info.get("dtype", th.float32)
-
-            if isinstance(vshape, int):
-                vshape = (vshape,)
-
-            if group:
-                assert group in groups, "Group {} must have its number of members defined in _groups_".format(group)
-                shape = (groups[group], *vshape)
-            else:
-                shape = vshape
-
-            if episode_const:
-                self.data.episode_data[field_key] = CompressibleBatchTensor(batch_size=batch_size,
-                                                                            shape=shape,
-                                                                            dtype=dtype,
-                                                                            device=self.device,
-                                                                            out_device=self.out_device,
-                                                                            chunk_size=self.chunk_size,
-                                                                            algo=self.algo)
-            else:
-                self.data.transition_data[field_key] = CompressibleBatchTensor(batch_size=batch_size,
-                                                                               shape=(max_seq_length, *shape),
-                                                                               dtype=dtype,
-                                                                               device=self.device,
-                                                                               out_device=self.out_device,
-                                                                               chunk_size=self.chunk_size,
-                                                                               algo=self.algo)
-
-    def get_compression_stats(self):
-        stats = {}
-
-        stats_list_ep = {}
-        for k, v in self.data.episode_data.items():
-            stats_list_ep[k] = v.get_compression_stats()
-
-        stats_list_trans = {}
-        for k, v in self.data.transition_data.items():
-            stats_list_trans[k] = v.get_compression_stats()
-
-        stats["fill_level"] = (np.mean([ v["fill_level"] for _, v in stats_list_trans.items() ])).item()
-        # stats["compression_ratio"] = (np.mean([v["compression_ratio"] for _, v in stats_list_trans.items()])).item()
-        stats["compression_ratio"] = (np.sum([v["predicted_full_size_compressed"] for _, v in stats_list_trans.items()])).item()\
-                                     / (np.sum([v["predicted_full_size_uncompressed"] for _, v in stats_list_trans.items()])).item()
-        stats["predicted_full_size_compressed"] = (np.sum([v["predicted_full_size_compressed"] for _, v in stats_list_trans.items()])).item()
-        stats["predicted_full_size_uncompressed"] = (
-            np.sum([v["predicted_full_size_uncompressed"] for _, v in stats_list_trans.items()])).item()
-        return stats
-
 class ReplayBuffer(EpisodeBatch):
 
     def __init__(self, scheme, groups, buffer_size, max_seq_length, burn_in_period, preprocess=None, device="cpu", out_device=None):
@@ -517,23 +314,3 @@ class ReplayBuffer(EpisodeBatch):
                                                                          self.scheme.keys(),
                                                                          self.groups.keys())
 
-
-class CompressibleReplayBuffer(CompressibleEpisodeBatch, ReplayBuffer):
-
-    def __init__(self, scheme, groups, buffer_size, max_seq_length, preprocess=None, device="cpu", out_device="cpu", compress=True, chunk_size=10, algo="zstd"):
-
-        CompressibleEpisodeBatch.__init__(self, scheme=scheme, groups=groups, batch_size=buffer_size,
-                                          max_seq_length=max_seq_length, data=None, preprocess=preprocess,
-                                          device=device,
-                                          out_device=out_device,
-                                          chunk_size=chunk_size,
-                                          algo=algo)
-        self.buffer_size = buffer_size  # same as self.batch_size but more explicit
-        self.buffer_index = 0
-        self.episodes_in_buffer = 0
-        self.out_device = out_device
-        self.chunk_size = chunk_size
-        self.algo = algo
-        pass
-
-    pass

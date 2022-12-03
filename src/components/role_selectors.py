@@ -12,16 +12,18 @@ class MultinomialRoleSelector(nn.Module):
         super(MultinomialRoleSelector, self).__init__()
         self.args = args
 
-        if getattr(self.args, 'add_role_id', False) and (self.args.use_role_latent):
+        use_role_latent = getattr(self.args, 'use_role_latent', False)
+
+        if getattr(self.args, 'add_role_id', False) and (use_role_latent):
             role_latent_dim = args.n_roles + args.action_latent_dim
-        elif self.args.use_role_latent:
+        elif use_role_latent:
             role_latent_dim = args.action_latent_dim
         else:
             role_latent_dim = args.n_roles
 
-        self.fc = nn.Sequential(nn.Linear(args.rnn_hidden_dim, 2 * args.rnn_hidden_dim),
+        self.fc = nn.Sequential(nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim),
                                             nn.ReLU(),
-                                            nn.Linear(2 * args.rnn_hidden_dim, role_latent_dim))
+                                            nn.Linear(args.rnn_hidden_dim, role_latent_dim))
 
         self.schedule = DecayThenFlatSchedule(args.epsilon_start,
                                               args.epsilon_finish,
@@ -51,19 +53,18 @@ class MultinomialRoleSelector(nn.Module):
 
         return dot  # logits
 
-    def select_role(self, role_logits, t_env, test_mode=False):
+    def select_role(self, role_pi, t_env, test_mode=False):
         # role_pis [bs*n_agents, n_roles] 
         if t_env is not None:
             self.epsilon = self.schedule.eval(t_env)
-        dist = Categorical(logits = role_logits)
+        dist = Categorical(logits = role_pi)
 
         if test_mode and (self.test_greedy):
-            picked_roles = role_logits.max(dim=1)[1]
+            picked_roles = role_pi.max(dim=1)[1]
         else:
             picked_roles = dist.sample().long()
-        log_p_role = dist.log_prob(picked_roles)
-        
-        return picked_roles, log_p_role
+            
+        return picked_roles
 
 
 REGISTRY["multinomial_role"] = MultinomialRoleSelector
@@ -73,45 +74,45 @@ class MLPRoleSelector(nn.Module):
     def __init__(self, input_shape, args):
         super(MLPRoleSelector, self).__init__()
         self.args = args
-
-        if getattr(self.args, 'add_role_id', False) and (self.args.use_role_latent):
-            role_latent_dim = args.n_roles + args.action_latent_dim
-        elif self.args.use_role_latent:
-            role_latent_dim = args.action_latent_dim
-        else:
-            role_latent_dim = args.n_roles
-
-
-        self.fc = nn.Sequential(nn.Linear(args.rnn_hidden_dim, 2 * args.rnn_hidden_dim),
+        self.fc = nn.Sequential(nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim),
                                             nn.ReLU(),
-                                            nn.Linear(2 * args.rnn_hidden_dim, args.rnn_hidden_dim),
-                                            nn.ReLU(),
-                                            nn.Linear(args.rnn_hidden_dim, role_latent_dim))
+                                            nn.Linear(args.rnn_hidden_dim, args.n_roles))
+
+        self.schedule = DecayThenFlatSchedule(args.epsilon_start,
+                                              args.epsilon_finish,
+                                              args.epsilon_anneal_time,
+                                              args.epsilon_anneal_time_exp,
+                                              args.role_action_spaces_update_start,
+                                              decay="linear")
+
+        self.role_action_spaces_update_start = self.args.role_action_spaces_update_start
+
+        self.epsilon = self.schedule.eval(0)
+
+        self.test_greedy = getattr(args, "test_greedy", True)
 
     def init_hidden(self):
         pass
 
-    def forward(self, inputs, role_latent):
+    def forward(self, inputs, role_latent = None):
         x = self.fc(inputs)
-
         return x
 
-    def select_role(self, role_logits, t_env, test_mode=False):
+    def select_role(self, role_pi, t_env, test_mode=False):
         # role_pis [bs*n_agents, n_roles] 
         if t_env is not None:
             self.epsilon = self.schedule.eval(t_env)
-        dist = Categorical(logits = role_logits)
+        dist = Categorical(role_pi)
 
         if test_mode and (self.test_greedy):
-            picked_roles = role_logits.max(dim=1)[1]
+            picked_roles = role_pi.max(dim=1)[1]
         else:
             picked_roles = dist.sample().long()
-        log_p_role = dist.log_prob(picked_roles)
         
-        return picked_roles, log_p_role
+        return picked_roles
 
 
-REGISTRY["mlp_role"] = MultinomialRoleSelector
+REGISTRY["mlp_role"] = MLPRoleSelector
 
 
 class DotSelector(nn.Module):
