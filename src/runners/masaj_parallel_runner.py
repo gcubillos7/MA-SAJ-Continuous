@@ -320,8 +320,6 @@ class ParallelRunner:
         returns.clear()
 
         for k, v in stats.items():
-            if  k == "ep_length":
-                self.logger.log_stat(prefix + k + "_max", max(v), self.t_env)
             if k != "n_episodes":
                 self.logger.log_stat(prefix + k + "_mean" , v/stats["n_episodes"], self.t_env)
         stats.clear()
