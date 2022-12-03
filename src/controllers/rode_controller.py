@@ -64,10 +64,8 @@ class RODEMAC:
         role_outputs = None
         if t % self.role_interval == 0:
             role_outputs = self.role_selector(self.role_hidden_states, self.role_latent)
-            # Roles seleccionados se actualizan
             self.selected_roles = self.role_selector.select_role(role_outputs, test_mode=test_mode, t_env=t_env).squeeze()
-            # [bs * n_agents]
-
+            
         # compute individual q-values
         # using hidden_states of each agent
         self.hidden_states = self.agent(agent_inputs, self.hidden_states)

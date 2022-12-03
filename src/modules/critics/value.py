@@ -13,25 +13,31 @@ class ValueNet(nn.Module):
         # obs + n_agents
         obs_shape = self._get_input_shape(scheme)
         self.input_shape = obs_shape
-        if args.obs_role:
+        if getattr(args, "obs_role", False):
             self.input_shape += args.n_roles
         self.output_type = "v"
 
+        self.use_layer_norm = getattr(args, "use_layer_norm ", False)
+        self.layer_norm = nn.LayerNorm(args.rnn_hidden_dim) 
+
         # Set up network layers
-        self.fc1 = nn.Linear(self.input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(self.input_shape, args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(args.rnn_hidden_dim, 1)
 
     def forward(self, inputs):
-        x = F.relu(self.fc1(inputs))
+        x = self.fc1(inputs)
+        if self.use_layer_norm:
+                    x = self.layer_norm(x)
+        x = F.relu(x)
         x = F.relu(self.fc2(x))
         v = self.fc3(x)
         return v  # bs, max_t, n_agents, n_actions
-
+    
     def _build_inputs(self, batch, bs, max_t):
-
-        inputs = [batch['obs'][:],
-                  th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1)]
+        # inputs = batch["obs"]
+        inputs = [batch['obs'],
+        th.eye(self.n_agents, device=batch.device).unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1)]
         # state, obs, action
 
         # inputs[0] --> [bs, max_t, n_agents, obs]
@@ -46,6 +52,7 @@ class ValueNet(nn.Module):
         # state
         input_shape = scheme["obs"]["vshape"]
         input_shape += self.n_agents
+
         return input_shape  # [n_agents + n_obs]
 
 
@@ -61,9 +68,9 @@ class RoleValueNet(nn.Module):
         self.output_type = "v"
 
         # Set up network layers
-        self.fc1 = nn.Linear(input_shape, 64)
-        self.fc2 = nn.Linear(64, 64)
-        self.fc3 = nn.Linear(64, 1)
+        self.fc1 = nn.Linear(input_shape, args.rnn_hidden_dim)
+        self.fc2 = nn.Linear(args.rnn_hidden_dim, args.rnn_hidden_dim)
+        self.fc3 = nn.Linear(args.rnn_hidden_dim, 1)
 
     def forward(self, inputs):
         x = F.relu(self.fc1(inputs))

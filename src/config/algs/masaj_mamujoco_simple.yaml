@@ -1,0 +1,101 @@
+name: "masaj"
+
+# Env
+env: "mujoco_multi"
+
+# Runner related
+runner: "parallel"   #   "episode"
+runner_scope: "transition"   #  "episodic"
+batch_size_run: 1
+
+# Learner
+learner: "masaj_simple_learner"
+
+# Policy
+agent: "mlp"
+mac: "continous_mac"
+role: "msj"
+use_std_layer: True
+parametrization: "exp"
+norm_reg: True
+
+# Env related
+continuous_actions: True
+action_selector: "gaussian"
+squash: True
+use_latent_normal: False
+double_value: False
+
+# Encoder-decoder for actions 
+action_encoder: "obs_reward"
+
+# Epsilon scheduler and masking
+epsilon_start: 1.0
+epsilon_finish: 0.05
+epsilon_decay: "exp"
+epsilon_anneal_time: 2000000 
+epsilon_anneal_time_exp: 2000000
+mask_before_softmax: True
+
+# Learners hyperparameters
+batch_size: 100
+use_target_actor: False
+target_update_interval: 1
+polyak_update: True
+tau: 0.005
+td_lambda: 1.0
+
+# Optimizer parameters
+optimizer: "adam"
+optim_eps: 0.0001 # 1e-5
+grad_norm_clip: 1.0
+lr: 0.0005 #0.0005s
+c_lr: 0.0005 #0.0005
+v_lr: 0.0005
+
+# Reward scale
+reward_scale: 1.0
+flip_reward_scale: False # reward_scale = 1/alpha, can improve stability if reward and alpha are large
+
+# Entropy related
+use_local_entropy: False # 
+local_alpha_update: "auto"
+target_entropy: "auto" 
+alpha_start: 0.1 # sac_alpha = alpha/reward_scale
+alpha_finish: 0.1
+alpha_anneal_time: 2000000
+alpha_decay: "exp"
+
+# Network structure hyper-parameters
+rnn_hidden_dim: 400 #400
+action_latent_dim: 0
+mixing_embed_dim: 100 # match qmix size
+hypernet_embed: 100 # match qmix size
+hypernet_layers: 2
+n_head: 2
+use_layer_norm: False
+
+# Buffer parameters
+buffer_size: 1000000 #100000
+burn_in_period: 1000
+
+# Logging parameters
+log_interval: 4000 # Log summary of stats after every {} timesteps
+runner_log_interval: 4000 # Log runner stats (not test stats) every {} timesteps
+learner_log_interval: 4000 # Log training stats every {} timesteps
+test_interval: 4000
+
+# Enviroments parameters
+env_args:
+  state_last_action: False
+
+# Obs parameters
+obs_agent_id: True # Include the agent's one_hot id in the observation
+obs_last_action: True  # Include the agent's last action (one_hot if applies) in the observation
+
+# Exploration parameters
+start_steps: 10000
+stop_steps: 10000
+ou_sigma: 0.0
+act_noise: 0.0
+exploration_mode: "gaussian"

@@ -1,9 +1,17 @@
 env: mujoco_multi
 
 env_args:
-  episode_limit: 1000
-  scenario: "manyagent_swimmer"
-  agent_conf: "10x2"
-  agent_obsk: 1
+  episode_limit: 400
+  scenario: "Humanoid-v2" # "HalfCheetah-v2"  
+  scenario_name: "Humanoid-v2" # "HalfCheetah-v2" 
+  agent_conf: "9|8" # "6x1"  
+  agent_obsk: 0 # 1
   obs_add_global_pos: False
+  
 t_max: 2000000
+
+
+
+# env_args.scenario="HalfCheetah-v2"
+# env_args.agent_conf="6x1"
+# env_args.agent_obsk=1

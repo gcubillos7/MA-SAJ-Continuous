@@ -4,6 +4,7 @@ from types import SimpleNamespace as SN
 
 
 class EpisodeBatch:
+
     def __init__(self,
                  scheme,
                  groups,
@@ -11,13 +12,15 @@ class EpisodeBatch:
                  max_seq_length,
                  data=None,
                  preprocess=None,
-                 device="cpu"):
+                 device="cpu",
+                 out_device=None):
         self.scheme = scheme.copy()
         self.groups = groups
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
         self.preprocess = {} if preprocess is None else preprocess
         self.device = device
+        self.out_device = out_device if out_device is not None else device
 
         if data is not None:
             self.data = data
@@ -83,7 +86,9 @@ class EpisodeBatch:
         for k, v in self.data.episode_data.items():
             self.data.episode_data[k] = v.to(device)
         self.device = device
-
+        return self
+    
+    # add data to bs ts in batch
     def update(self, data, bs=slice(None), ts=slice(None), mark_filled=True):
         slices = self._parse_slices((bs, ts))
         for k, v in data.items():
@@ -93,23 +98,36 @@ class EpisodeBatch:
                     target["filled"][slices] = 1
                     mark_filled = False
                 _slices = slices
+
             elif k in self.data.episode_data:
                 target = self.data.episode_data
                 _slices = slices[0]
             else:
                 raise KeyError("{} not found in transition or episode data".format(k))
-            if not th.is_tensor(v):
-                dtype = self.scheme[k].get("dtype", th.float32)
-                v = th.tensor(np.array(v), dtype=dtype, device=self.device)
-            self._check_safe_view(v, target[k][_slices])
+
+            dtype = self.scheme[k].get("dtype", th.float32)
+            # if isinstance(v, list):
+            #     v = np.array(v)
+            v = th.tensor(v, dtype=dtype, device=self.device)
+                
+            try:
+                self._check_safe_view(v, target[k][_slices])
+            except Exception as e:
+                pass
+
             target[k][_slices] = v.view_as(target[k][_slices])
 
             if k in self.preprocess:
-                new_k = self.preprocess[k][0]
+                try:
+                    new_k = self.preprocess[k][0]
+                except Exception as e:
+                    a = 5
+                    pass
                 v = target[k][_slices]
                 for transform in self.preprocess[k][1]:
                     v = transform.transform(v)
-                target[new_k][_slices] = v.view_as(target[new_k][_slices])
+                    target[new_k][_slices] = v.view_as(target[new_k][_slices])
+            pass
 
     def _check_safe_view(self, v, dest):
         idx = len(v.shape) - 1
@@ -123,9 +141,9 @@ class EpisodeBatch:
     def __getitem__(self, item):
         if isinstance(item, str):
             if item in self.data.episode_data:
-                return self.data.episode_data[item]
+                return self.data.episode_data[item].to(self.device)
             elif item in self.data.transition_data:
-                return self.data.transition_data[item]
+                return self.data.transition_data[item].to(self.device)
             else:
                 raise ValueError
         elif isinstance(item, tuple) and all([isinstance(it, str) for it in item]):
@@ -143,7 +161,7 @@ class EpisodeBatch:
             new_groups = {self.scheme[key]["group"]: self.groups[self.scheme[key]["group"]]
                           for key in item if "group" in self.scheme[key]}
             ret = EpisodeBatch(new_scheme, new_groups, self.batch_size, self.max_seq_length, data=new_data, device=self.device)
-            return ret
+            return ret.to(self.device)
         else:
             item = self._parse_slices(item)
             new_data = self._new_data_sn()
@@ -156,7 +174,7 @@ class EpisodeBatch:
             ret_max_t = self._get_num_items(item[1], self.max_seq_length)
 
             ret = EpisodeBatch(self.scheme, self.groups, ret_bs, ret_max_t, data=new_data, device=self.device)
-            return ret
+            return ret.to(self.device)
 
     def _get_num_items(self, indexing_item, max_size):
         if isinstance(indexing_item, list) or isinstance(indexing_item, np.ndarray):
@@ -203,13 +221,60 @@ class EpisodeBatch:
                                                                                      self.scheme.keys(),
                                                                                      self.groups.keys())
 
+    def share(self):
+        {v.share_memory_() for _, v in self.data.transition_data.items()}
+        {v.share_memory_() for _, v in self.data.episode_data.items()}
+        return self
+
+    def clone(self):
+        self.data.transition_data = {k:v.clone() for k, v in self.data.transition_data.items()}
+        self.data.episode_data = {k: v.clone() for k, v in self.data.episode_data.items()}
+        return self
+
+    def to_df(self):
+        # convert to pandas dataframe so can be viewed easily in pycharm
+        import pandas as pd
+
+        # transition data
+        cols = list(self.data.transition_data.keys())
+        cln_cols = [] # clean for agent dimension
+        cln_data = []
+        for col in cols:
+            if self.data.transition_data[col].dim() == 4:
+                n_agents = self.data.transition_data[col].shape[-2]
+                for aid in range(n_agents):
+                    cln_cols.append(col + "__agent{}".format(aid))
+                    cln_data.append(self.data.transition_data[col][:,:,aid,:].cpu().numpy())
+            else:
+                cln_cols.append(col)
+                cln_data.append(self.data.transition_data[col].cpu().numpy())
+
+        batch_size = self.data.transition_data[cols[0]].shape[0]
+        seq_len = self.data.transition_data[cols[0]].shape[1]
+        transition_pds = []
+        for b in range(batch_size):
+            pds = pd.DataFrame(columns=cln_cols,
+                              data=[[cln_data[j][b, t, :][0] if len(cln_data[j][b, t, :]) == 1 else cln_data[j][b, t, :] for j, _ in enumerate(cln_cols)] for t in range(seq_len)])
+            transition_pds.append(pds)
+
+        # episode data
+        episode_pds = []
+        cols = list(self.data.episode_data.keys())
+        if self.data.episode_data != {}:
+            for b in range(self.data.episode_data[cols[0]].shape[0]):
+                pd = pd.DataFrame(columns=cln_cols,
+                                  data=[[cln_data[j][b, :] for j, _ in enumerate(cln_cols)] for t in range(1)])
+                episode_pds.append(pd)
+        return transition_pds, episode_pds
 
 class ReplayBuffer(EpisodeBatch):
-    def __init__(self, scheme, groups, buffer_size, max_seq_length, burn_in_period, preprocess=None, device="cpu"):
-        super(ReplayBuffer, self).__init__(scheme, groups, buffer_size, max_seq_length, preprocess=preprocess, device=device)
+
+    def __init__(self, scheme, groups, buffer_size, max_seq_length, burn_in_period, preprocess=None, device="cpu", out_device=None):
+        super(ReplayBuffer, self).__init__(scheme, groups, buffer_size, max_seq_length, preprocess=preprocess, device=device, out_device=out_device)
         self.buffer_size = buffer_size  # same as self.batch_size but more explicit
         self.buffer_index = 0
         self.episodes_in_buffer = 0
+        self.out_device = out_device if out_device is not None else device
         self.burn_in_period = burn_in_period
 
     def insert_episode_batch(self, ep_batch):
@@ -226,23 +291,26 @@ class ReplayBuffer(EpisodeBatch):
             assert self.buffer_index < self.buffer_size
         else:
             buffer_left = self.buffer_size - self.buffer_index
-            self.insert_episode_batch(ep_batch[0:buffer_left, :])
-            self.insert_episode_batch(ep_batch[buffer_left:, :])
+            self.insert_episode_batch(ep_batch[0:buffer_left, :].to(self.device))
+            self.insert_episode_batch(ep_batch[buffer_left:, :].to(self.device))
 
     def can_sample(self, batch_size):
-        return self.episodes_in_buffer >= self.burn_in_period
+        return self.episodes_in_buffer >= batch_size
 
     def sample(self, batch_size):
         assert self.can_sample(batch_size)
         if self.episodes_in_buffer == batch_size:
-            return self[:batch_size]
+            out_batch = self[:batch_size].clone().share().to(self.out_device)
+            return out_batch.to(self.out_device)
         else:
             # Uniform sampling only atm
-            ep_ids = np.random.choice(self.episodes_in_buffer, batch_size, replace=False)
-            return self[ep_ids]
+            ep_ids = np.random.choice(self.episodes_in_buffer, batch_size, replace=False).tolist()
+            out_batch = self[ep_ids].clone().share().to(self.out_device)
+            return out_batch.to(self.out_device)
 
     def __repr__(self):
-        return "ReplayBuffer. {}/{} episodes. Keys:{} Groups:{}".format(self.episodes_in_buffer,
-                                                                        self.buffer_size,
-                                                                        self.scheme.keys(),
-                                                                        self.groups.keys())
+        return "ReplayBuffer. {}/{} episodes.q Keys:{} Groups:{}".format(self.episodes_in_buffer,
+                                                                         self.buffer_size,
+                                                                         self.scheme.keys(),
+                                                                         self.groups.keys())
+

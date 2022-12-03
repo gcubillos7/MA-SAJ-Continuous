@@ -1,11 +1,10 @@
 from typing import Callable
-from matplotlib.style import available
 from envs import REGISTRY as env_REGISTRY
 from functools import partial
 from components.episode_buffer import EpisodeBatch
 import numpy as np
 import copy
-
+import random
 class EpisodeRunner:
 
     def __init__(self, args, logger):
@@ -22,10 +21,10 @@ class EpisodeRunner:
         else:
             self.env = env_REGISTRY[self.args.env](env_args=self.args.env_args, args=args)
 
+
         self.episode_limit = self.env.episode_limit
 
         self.t = 0
-
         self.t_env = 0
 
         self.train_returns = []
@@ -36,17 +35,64 @@ class EpisodeRunner:
         # Log the first run
         self.log_train_stats_t = -1000000
         self.step: Callable = self.step_particle if self.args.env in ["particle"] else self.step_default 
-    
+        # self.test_mamujoco()
+    def test_mamujoco(self):
+        
+        env_info = self.get_env_info()
+        action_spaces = env_info["action_spaces"]
+        np.random.seed(42)
+        action = np.array([action_spaces[0].sample() for i in range(len(action_spaces))], dtype = np.float32)
+        action = action/action
+        N = 10000
+
+        for i in range(N):
+            self.env.reset()
+            state1 = self.env.get_state()
+            self.step(action)
+            state1p = self.env.get_state() 
+            diff = state1p - state1
+            if i == 0:
+                mean_diff = diff*0
+
+            mean_diff += diff/N
+
+        for i in range(N):
+            self.env.reset()
+            state1 = self.env.get_state()
+            self.step(action)
+            state1p = self.env.get_state() 
+            diff = state1p - state1
+            if i == 0:
+                mean_diff2 = diff*0
+            mean_diff2 += diff/N
+
+
+        for i in range(N):
+            self.env.reset()
+            state1 = self.env.get_state()
+            self.step(action*(0.5))
+            state1p = self.env.get_state() 
+            diff = state1p - state1
+            if i == 0:
+                mean_diff3 = diff*0
+            mean_diff3 += diff/N
+
+        print(np.abs(mean_diff - mean_diff2)<(1e-3))
+        print()
+        print()
+        print(np.abs(mean_diff - mean_diff3)<(1e-3))
+
+
     def setup(self, scheme, groups, preprocess, mac):
         self.new_batch = partial(EpisodeBatch, scheme, groups, self.batch_size, self.episode_limit + 1,
                                  preprocess=preprocess, device=self.args.device)
         
         if self.args.mac =='rode_mac':
-            self.get_post_transition = self.post_transition
+            self.get_post_transition = self.rode_post_transition
         elif self.args.mac == 'role_mac':
             self.get_post_transition = self.role_post_transition
         else:
-            self.get_post_transition = self.rode_post_transition
+            self.get_post_transition = self.post_transition
         self.mac = mac
 
     def role_post_transition(self, policy_out):
@@ -87,10 +133,14 @@ class EpisodeRunner:
         return reward, terminated, env_info
 
     def step_default(self, actions):
+        ## Added
+        # if type(actions)!=np.ndarray:
+        #     actions = actions.cpu()
+        ##
         reward, terminated, env_info = self.env.step(actions)
         return reward, terminated, env_info
         
-    def run(self, test_mode=False):
+    def run(self, test_mode=False, **kwargs):
         self.reset()
 
         terminated = False
@@ -103,7 +153,7 @@ class EpisodeRunner:
                 "avail_actions": [self.env.get_avail_actions()],
                 "obs": [self.env.get_obs()]
             }
-
+            
             self.batch.update(pre_transition_data, ts=self.t)
 
             # Pass the entire batch of experiences up till now to the agents
@@ -140,6 +190,7 @@ class EpisodeRunner:
         cur_stats.update({k: cur_stats.get(k, 0) + env_info.get(k, 0) for k in set(cur_stats) | set(env_info)})
         cur_stats["n_episodes"] = 1 + cur_stats.get("n_episodes", 0)
         cur_stats["ep_length"] = self.t + cur_stats.get("ep_length", 0)
+        cur_stats["max_t"] = max(self.t, cur_stats.get("max_t", 0))
 
         if not test_mode:
             self.t_env += self.t
@@ -162,6 +213,10 @@ class EpisodeRunner:
         returns.clear()
 
         for k, v in stats.items():
-            if k != "n_episodes":
+            if  k == "max_t":
+                self.logger.log_stat(prefix + k, v, self.t_env)
+            elif k != "n_episodes":
                 self.logger.log_stat(prefix + k + "_mean", v / stats["n_episodes"], self.t_env)
+
+
         stats.clear()
