@@ -1,5 +1,5 @@
 # MA-SAJ-Continuous
-For continuous version visit [MA-SAJ](https://github.com/gcubillos7/MA-SAJ).
+For discrete version visit [MA-SAJ](https://github.com/gcubillos7/MA-SAJ).
 This implementation is written in PyTorch and is based on [PyMARL](https://github.com/oxwhirl/pymarl) and [SMAC](https://github.com/oxwhirl/smac).
 
 ## Installation instructions
